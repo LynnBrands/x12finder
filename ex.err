@@ -1,0 +1,19 @@
+G:\Euphoria4\X12Viewer\x12finder.exw:72
+<0052>:: can't find 'Win32Lib.ew' in any of ...
+	G:\Euphoria4\X12Viewer
+	G:\Euphoria4\X12Viewer\x12finder.exw
+	G:\Euphoria4\include
+
+include Win32Lib.ew  -- David Cuny, Derek Parnell, etc.
+                      ^
+
+
+--- Defined Words ---
+EU4
+EU4_0
+EU4_0_4
+WINDOWS
+WIN32
+GUI
+EUI
+-------------------

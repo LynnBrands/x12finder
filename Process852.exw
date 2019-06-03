@@ -1,0 +1,1027 @@
+without warning
+-- Process Inbound 852 documents to SQL Server
+-- Written by Michael J. Sabal
+
+--------------------------------------------------------------------------------
+-- History log
+--------------------------------------------------------------------------------
+-- v. 1.0 - Stand alone program based on X12Finder.exw
+--------------------------------------------------------------------------------
+-- To do list
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- INCLUDES
+--------------------------------------------------------------------------------
+
+include Win32Lib.ew  -- David Cuny, Derek Parnell, etc.
+include odbc.ew as odbc
+include get.e
+include msgbox.e
+include file.e
+include wildcard.e
+include datetime.e   -- (c) 2001 CyrekSoft
+
+--------------------------------------------------------------------------------
+-- VARIABLES & CONSTANTS
+--------------------------------------------------------------------------------
+constant today = date()
+sequence whitelist, dt_fdate, dt_tdate
+sequence pgptr, fname
+atom curpg, segterm, elemterm
+sequence srID, GScn, GStype, ISAdate, ISAtime
+sequence INIoptions
+atom INIflag
+atom db_conn
+
+pgptr = {}
+curpg = 1
+INIoptions = {}
+INIflag = 1
+db_conn = -1
+
+constant TPList = {
+{"",""},
+{"8137472355","Bealls"},
+{"6123830000","Belk"},
+{"6123830200","Belk 856"},
+{"6113310072","Bloomingdales"},
+{"6113310272","Bloomingdales 856"},
+{"007902463","Bon-Ton"},
+{"014492501","Boscov"},
+{"6126750000","Burlington Coat Factory","BCFTY"},
+{"6130110000","Carsons"},
+{"054744677","Charming Shoppes"},
+{"EEC3044200627","Coldwater Creek"},
+{"501354613324","Coldwater Creek 810"},
+{"6112391050","Dillards"},
+{"5032337598","Fred Meyer","FREDM"},
+{"6159662000","Goody","GOODY"},
+{"102294774","Gordman"},
+{"147575138","Gottschalk"},
+{"UPCEXPDATA","GXS Catalog"},
+{"049123995","Hamricks"},
+{"120812854","Inovis Catalog"},
+{"6111355027","JC Penney 753"},
+{"6111350027","JC Penney 754"},
+{"6111355001","JC Penney 810"},
+{"6111350020","JC Penney 812"},
+{"6111350021","JC Penney 824"},
+{"6111350003","JC Penney 850"},
+{"6111355038","JC Penney 855"},
+{"6111355005","JC Penney 856"},
+{"6111350009","JC Penney 864"},
+{"6111355002","JC Penney Cat 810"},
+{"6111350004","JC Penney Cat 850"},
+{"6111355006","JC Penney Cat 856"},
+{"4043517987","K&G Menswear"},
+{"4147037000","Kohls","KOHLS"},
+{"6113310071","Macys East"},
+{"6113310271","Macys East 856"},
+{"6113310020","Macys FL (Burdines)","BURDI"},
+{"6113310220","Macys FL 856"},
+{"6113310063","Macys MW (F.Barr)"},
+{"6113310263","Macys MW 856"},
+{"6113310064","Macys N (Marsh.)"},
+{"6113310264","Macys N 856"},
+{"6113310065","Macys NW (BonMar)"},
+{"6113310265","Macys NW 856"},
+{"6113310040","Macys S (Richs)"},
+{"6113310240","Macys S 856"},
+{"6113310010","Macys West"},
+{"6113310210","Macys West 856"},
+{"1100001991","Mervyns"},
+{"007942915","Nordstrom"},
+{"050357789","Pamida","PAMIDA"},
+{"6135630001","Peebles"},
+{"8044475255","Peebles 856"},
+{"4142785783","Saks 5th Ave 810"},
+{"006989867","Saks 5th Ave 850"},
+{"6092785376","Saks 5th Ave 856"},
+{"6111250001","Sears 810"},
+{"6111250008","Sears 812"},
+{"6111250013","Sears 850"},
+{"6111250049","Sears 856"},
+{"007041346","Steinmart"},
+{"6111332000","VF Outlet"}
+}
+
+--------------------------------------------------------------------------------
+--  Window X12Win
+--------------------------------------------------------------------------------
+
+constant X12Win = createEx( Window, "Process 852", 0, Default, Default, 450, 380, 0, 0 )
+constant FindButton = createEx( PushButton, "Find it now!", X12Win, 280, 282, 90, 30, 0, 0 )
+constant LText4 = createEx( LText, "Look in:", X12Win, 4, 15, 40, 20, 0, 0 )
+constant PathList = createEx( Combo, "", X12Win, 50, 12, 200, 20*6, 0, 0 )
+constant LText18 = createEx ( LText, "ISA", X12Win, 50, 43, 30, 20, 0, 0 )
+constant ISAEdit = createEx ( EditText, "", X12Win, 90, 40, 50, 20, 0, 0 )
+constant LText19 = createEx ( LText, "GS", X12Win, 145, 43, 30, 20, 0, 0 )
+constant GSEdit = createEx (EditText, "", X12Win, 180, 40, 50, 20, 0, 0 )
+constant UPCLabel = createEx( LText, "UPC #", X12Win, 50, 75, 70, 20, 0, 0 )
+constant UPCEdit = createEx( EditText, "", X12Win, 128, 72, 140, 20, 0, 0 )
+constant TPLabel = createEx( LText,"Customer", X12Win, 50,139,70,20,0,0)
+constant TPEdit = createEx( Combo, "", X12Win, 128, 136, 140, 20*6, 0, 0)
+constant FromDate = createEx( EditText, sprintf("%02d/%02d/%04d",{today[2],today[3],today[1]+1900}),
+                      X12Win, 128, 195, 70, 20, 0, 0 )
+constant ToDate = createEx( EditText, sprintf("%02d/%02d/%04d",{today[2],today[3],today[1]+1900}),
+                      X12Win, 128, 227, 70, 20, 0, 0 )
+constant LText15 = createEx( LText, "From Date:", X12Win, 50, 198, 70, 20, 0, 0 )
+constant LText16 = createEx( LText, "To Date:", X12Win, 50, 230, 70, 20, 0, 0 )
+constant ResultText = createEx( CText, "", X12Win, 50, 250, 250, 40, 0, 0 )
+constant LText24 = createEx( LText, "Results:", X12Win, 4, 320, 40, 20, 0, 0 )
+constant ResultList = createEx( DropDownList, "", X12Win, 50, 320, 320, 20*6, 0, 0 )
+constant ProcessButton = createEx( PushButton, "Process", X12Win, 380, 320, 60, 20, 0, 0 )
+--------------------------------------------------------------------------------
+
+setFont( FindButton,"Arial Black",10,Normal)
+addItem(PathList, "J:\\ExternalData\\#2007")
+addItem(PathList, "J:\\IntIn\\#2008")
+addItem(PathList, "J:\\IntOut\\#2008")
+addItem(PathList, "J:\\IntIn\\#2007")
+addItem(PathList, "J:\\IntOut\\#2007")
+addItem(PathList, "J:\\IntIn\\#2006")
+addItem(PathList, "J:\\IntOut\\#2006")
+for ctr = 1 to length(TPList) do
+  addItem(TPEdit, TPList[ctr][2])
+end for
+setIndex(TPEdit,1)
+
+--------------------------------------------------------------------------------
+-- SUPPORT ROUTINES
+--------------------------------------------------------------------------------
+
+function pop_whitelist1(sequence path, sequence entry)
+
+  if find('d',entry[D_ATTRIBUTES]) then
+    -- no directories
+    return 0
+  end if
+  if daysDifference(dt_fdate,entry[4..6]) < 0 then
+    -- entry is too old
+    return 0
+  end if
+  if daysDifference(entry[4..6],dt_tdate) < 0 then
+    -- entry is too recent
+    return 0
+  end if
+
+  whitelist = append(whitelist,path&'\\'&entry[1])
+
+  return 0
+
+end function
+
+--------------------------------------------------------------------------------
+
+function parse_seg(sequence line, atom elemterm)
+
+  sequence seg
+  atom i1, i2
+
+            seg = {}
+            i1 = 1
+            i2 = 0
+            for i = 1 to length(line) do
+              if line[i] = elemterm then
+                i2 = i-1
+                seg = append(seg,line[i1..i2])
+                i1 = i + 1
+              end if
+            end for
+            seg = append(seg,line[i1..length(line)])
+
+
+  return seg
+
+end function
+
+--------------------------------------------------------------------------------
+
+function count(object lookin, object lookfor)
+
+  atom found
+  found = 0
+
+  if atom(lookin) and sequence(lookfor) then
+    return 0
+  elsif atom(lookin) and atom(lookfor) and lookin=lookfor then
+    return 1
+  elsif atom(lookin) and atom(lookfor) and lookin!=lookfor then
+    return 0
+  else
+    for ctr = 1 to length(lookin) do
+      if compare(lookin[ctr],lookfor)=0 then
+        found = found + 1
+      end if
+    end for
+    return found
+  end if
+
+  return found
+
+end function
+
+--------------------------------------------------------------------------------
+
+function trim(object s)
+
+  if not sequence(s) then
+    return s
+  end if
+
+  for ctr = 1 to length(s) do
+    if atom(s[ctr]) and s[ctr]>32 then
+      s = s[ctr..length(s)]
+      exit
+    end if
+    if ctr = length(s) then
+      return ""
+    end if
+  end for
+  for ctr = length(s) to 1 by -1 do
+    if atom(s[ctr]) and s[ctr]>32 then
+      s = s[1..ctr]
+      exit
+    end if
+  end for
+
+  return s
+
+end function
+
+--------------------------------------------------------------------------------
+
+function select(atom dbconn, sequence SQLquery)
+
+  object SQLcursor, SQLdata, junk
+  sequence e
+
+  if dbconn <= 0 then
+    junk = message_box(sprintf("ODBC Connection error: dbconn = %d",dbconn),"SQL error",MB_ICONWARNING)
+    return {}
+  end if
+
+  SQLdata = execDirectODBC(dbconn,SQLquery)
+  if atom(SQLdata) and SQLdata > 0 then
+    e = getErrorODBC(SQLdata)
+    junk = message_box(sprintf("ODBC Error #%d: %s\n",e),"SQL error",MB_ICONWARNING)
+    freeStmt(SQLdata,SQL_RESET_PARAMS)
+    freeHandleODBC(SQLdata)
+    return {}
+  elsif atom(SQLdata) and SQLdata < 0 then
+    e = getErrorODBC(-SQLdata)
+    junk = message_box(sprintf("ODBC Error #%d: %s\n",e),"SQL error",MB_ICONWARNING)
+    freeHandleODBC(-SQLdata)
+    return {}
+  end if
+  SQLcursor = SQLdata[2..length(SQLdata)] -- strip column headers
+  SQLdata = {} -- release the memory
+
+  return SQLcursor
+
+end function
+
+--------------------------------------------------------------------------------
+
+procedure update(atom dbconn, sequence SQLquery)
+
+  object SQLhandle, SQLdata, junk
+  sequence e
+
+  if dbconn <= 0 then
+    junk = message_box(sprintf("ODBC Connection error: dbconn = %d",dbconn),"SQL error",MB_ICONWARNING)
+    return
+  end if
+  SQLhandle = prepareSQL(dbconn,SQLquery)
+  if SQLhandle < 0 then
+    e = getErrorODBC(SQLhandle)
+    junk = message_box(sprintf("ODBC Error #%d: %s\n",e),"SQL error",MB_ICONWARNING)
+    freeStmt(-SQLhandle,SQL_RESET_PARAMS)
+    freeHandleODBC(-SQLhandle)
+    return
+  end if
+  SQLdata = executeSQL(SQLhandle)
+  if SQLdata < 0 then
+    e = getErrorODBC(SQLhandle)
+    junk = message_box(sprintf("ODBC Error #%d: %s\n",e),"SQL error",MB_ICONWARNING)
+    freeStmt(SQLhandle,SQL_RESET_PARAMS)
+    freeHandleODBC(SQLhandle)
+    return
+  end if
+  freeStmt(SQLhandle,SQL_RESET_PARAMS)
+  freeHandleODBC(SQLhandle)
+
+end procedure
+
+--------------------------------------------------------------------------------
+-- INI PROCESSING
+--------------------------------------------------------------------------------
+
+procedure read_INI()
+
+  atom fp
+  object line
+
+  fp = open("process852.ini","r")
+  if fp < 2 then
+    INIflag = 0
+    return
+  end if
+
+  line = gets(fp)
+
+  while sequence(line) do
+    if match("[DIRLIST]",upper(line))>0 then
+      INIoptions = append(INIoptions,{"[DIRLIST]",{}})
+    elsif match("[LASTSEARCH]",upper(line))>0 then
+      INIoptions = append(INIoptions,{"[LASTSEARCH]",{}})
+    elsif length(trim(line))=0 then
+      -- do nothing
+    elsif line[1]='#' or line[1]=';' then
+      -- a comment
+    else
+      INIoptions[length(INIoptions)][2] = append(INIoptions[length(INIoptions)][2],trim(line))
+    end if
+    line = gets(fp)
+  end while
+  close(fp)
+
+  for ctr = 1 to length(INIoptions) do
+    if compare(INIoptions[ctr][1],"[DIRLIST]")=0 then
+      eraseItems(PathList)
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        addItem(PathList,INIoptions[ctr][2][ctr2])
+      end for
+    elsif compare(INIoptions[ctr][1],"[LASTSEARCH]")=0 then
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        line = upper(INIoptions[ctr][2][ctr2])
+        if match("FDATE=",line)=1 then
+          setText(FromDate,line[7..length(line)])
+        elsif match("TDATE=",line)=1 then
+          setText(ToDate,line[7..length(line)])
+        elsif match("ISA=",line)=1 then
+          setText(ISAEdit,line[5..length(line)])
+        elsif match("GS=",line)=1 then
+          setText(GSEdit,line[4..length(line)])
+        elsif match("UPC=",line)=1 then
+          setText(UPCEdit,line[5..length(line)])
+        elsif match("PATH=",line)=1 then
+          setText(PathList,line[6..length(line)])
+        elsif match("TP=",line)=1 then
+          setText(TPEdit,line[4..length(line)])
+        end if
+      end for
+    end if
+  end for
+
+
+end procedure
+
+--------------------------------------------------------------------------------
+
+procedure write_INI()
+
+  atom fp
+  sequence path, fdate, tdate
+  sequence UPC,ISA,GS, TP
+
+  if not INIflag then
+    return
+  end if
+  path = getText(PathList)
+  fdate = getText(FromDate)
+  tdate = getText(ToDate)
+  UPC = getText(UPCEdit)
+  ISA = getText(ISAEdit)
+  GS = getText(GSEdit)
+  TP = getText(TPEdit)
+
+  fp = open("process852.ini","w")
+  if fp < 2 then
+    return
+  end if
+
+  for ctr = 1 to length(INIoptions) do
+    if compare(INIoptions[ctr][1],"[DIRLIST]")=0 then
+      puts(fp,"[DIRLIST]\n")
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        puts(fp,INIoptions[ctr][2][ctr2]&"\n")
+      end for
+    end if
+  end for
+  puts(fp,"\n")
+  puts(fp,"[LASTSEARCH]\n")
+  puts(fp,"path="&path&"\n")
+  puts(fp,"fdate="&fdate&"\n")
+  puts(fp,"tdate="&tdate&"\n")
+  puts(fp,"ISA="&ISA&"\n")
+  puts(fp,"GS="&GS&"\n")
+  puts(fp,"UPC="&UPC&"\n")
+  puts(fp,"TP="&TP&"\n")
+  puts(fp,"\n")
+
+  close(fp)
+
+end procedure
+
+--------------------------------------------------------------------------------
+-- EVENT ROUTINES
+--------------------------------------------------------------------------------
+
+global procedure onClose_X12Win(integer self, integer event, sequence params)
+
+  write_INI()
+
+end procedure
+setHandler(X12Win,w32HClose,routine_id("onClose_X12Win"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ProcessButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  sequence buffer, undolist, cust_code, report_date, sku, skulookup
+  object style,color,label,dim,sizebk,sizename,store,retail
+  sequence store_state,store_region
+  sequence qty_list, data
+  atom fp, skip, action, recs_added, recs_updated
+  sequence ISA, GS, UPC, tpID
+  sequence seg, dtype,now, c_op
+  sequence regions
+
+  fname = getText(ResultList)
+  buffer = ""
+  undolist = {}
+  curpg = 1
+  pgptr = {}
+  now = date()
+  qty_list = {0,0,0,0,0}  -- QS,QR,OH,QA,QP
+  action = 1
+  recs_added = 0
+  recs_updated = 0
+  regions = {	-- As defined by the U.S. Census Bureau (http://en.wikipedia.org/wiki/Regions_of_the_United_States)
+	{"ME","VT","NH","MA","CT","RI"},	-- New England
+	{"NY","NJ","PA"},					-- Mid Atlantic
+	{"WI","MI","IL","IN","OH"},			-- Midwest
+	{"ND","SD","NE","KS","MN","IA","MO"},-- Northern plains
+	{"DE","DC","MD","VA","WV","NC","SC","GA","FL"}, -- Southeast
+	{"KY","TN","MS","AL"},				-- East South Central
+	{"OK","TX","AR","LA"},				-- West South Central
+	{"MT","ID","WY","CO","UT","NV","AZ","NM"}, -- Mountain
+	{"WA","OR","CA","AK","HI"}}			-- Pacific
+
+  fp = open(fname,"r")
+  if fp < 2 then
+    junk = message_box("The file you selected is not available.","File error",MB_ICONWARNING)
+    return
+  end if
+
+  UPC = getText(UPCEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  dtype = "852"
+  pgptr = append(pgptr, where(fp))
+
+  line = get_bytes(fp,106)
+  if sequence(line) and length(line)=106 then
+    elemterm = line[4]
+    segterm = line[106]
+    line = line[1..105]
+  end if
+
+  -- ISA filter
+  if length(ISA)>0 and match(ISA,line[91..99])=0 then
+    skip = 3
+  else
+    skip = 0
+  end if
+  seg = parse_seg(line,elemterm)
+
+  while sequence(line) and length(line)>0 and length(buffer) < 32000 do
+    if skip = 0 then
+      undolist = append(undolist,{length(buffer)+1,seg[1]})
+      buffer = buffer & line & segterm & 13 & 10
+      if compare(seg[1],"ISA")=0 then
+		tpID = trim(line[36..50])
+        srID = trim(line[55..69])
+        ISAdate = line[71..76]
+        ISAtime = line[78..81]
+      elsif compare(seg[1],"GS")=0 then
+        GScn = seg[7]
+        GStype = seg[2]
+      end if
+    end if
+    line = ""
+    c = getc(fp)
+    while c >= 0 and c != segterm do
+      line = line & c
+      c = getc(fp)
+    end while
+    seg = parse_seg(line,elemterm)
+	cust_code = ""
+	for ctr = 1 to length(TPList) do
+		if compare(tpID,TPList[ctr][1])=0 and length(TPList[ctr])>=3 then
+			cust_code = TPList[ctr][3]
+			exit
+		end if
+	end for
+	if length(cust_code)=0 then
+		junk = message_box("There is no customer code for Send/Recv ID "&tpID,"Cannot continue",
+			MB_ICONSTOP)
+		return
+	end if
+
+    -- Filters
+    if length(seg)=0 then
+      -- do nothing
+    elsif (skip = 3 or skip = 0) and compare(seg[1],"ISA")=0 then
+      if length(ISA)=0 or match(ISA,line[91..99])>0 then
+        skip = 0
+      elsif length(ISA)>0 and match(ISA,line[91..99])=0 then
+        skip = 3
+      end if
+    elsif (skip = 2 or skip = 0) and compare(seg[1],"GS")=0 then
+      if length(GS)=0 or match(GS,seg[7])>0 then
+        skip = 0
+      elsif length(GS)>0 and match(GS,seg[7])=0 and compare(dtype,"997")!=0 then
+        skip = 2
+      end if
+    elsif (skip = 1 or skip = 0) and compare(seg[1],"ST")=0 then
+      if compare(seg[2],dtype)=0 then
+        skip = 0
+      else
+        skip = 1
+      end if
+    elsif (skip = 1) and compare(seg[1],"GE")=0 then
+      skip = 0
+    elsif (skip = 2) and compare(seg[1],"IEA")=0 then
+      skip = 0
+    end if
+	if compare(seg[1],"XQ")=0 then
+		if length(seg)>=4 and length(seg[4])=8 then
+			report_date = seg[4]
+		elsif length(seg)>=3 and length(seg[3])=8 then
+			report_date = seg[3]
+		else
+			report_date = sprintf("%04d%02d%02d",{now[1]+1900,now[2],now[3]})
+		end if
+		-- Reformat
+		report_date = report_date[1..4]&'-'&report_date[5..6]&'-'&report_date[7..8]
+	elsif compare(seg[1],"LIN")=0 then
+		sku = ""
+		skulookup = ""
+		c_op = "="
+		for ctr = 2 to length(seg) do
+			-- Prefer UPC over customer style
+			if compare(seg[ctr],"UP")=0 or compare(seg[ctr],"UK")=0 then
+				skulookup = "zzeupcnr"
+				if ctr+1 <= length(seg) and length(seg[ctr+1])>11 then
+					sku = seg[ctr+1]
+					exit
+				else
+					junk = message_box("The LIN segment is malformed.  Continue?",
+						"Parse error",MB_YESNO)
+					if junk = IDYES then
+						sku = ""
+					else
+						close(fp)
+						return
+					end if
+				end if
+			elsif compare(seg[ctr],"IN")=0 or compare(seg[ctr],"CB")=0 then
+				skulookup = "zzxcstdr"
+				if ctr+1 <= length(seg) and length(seg[ctr+1])>0 then
+					sku = seg[ctr+1]
+					exit
+				else
+					junk = message_box("The LIN segment is malformed.  Continue?",
+						"Parse error",MB_YESNO)
+					if junk = IDYES then
+						sku = ""
+					else
+						close(fp)
+						return
+					end if
+				end if
+			end if
+		end for
+		style = ""
+		color = ""
+		label = ""
+		sizebk = ""
+		sizename = ""
+		dim = ""
+		if compare(sku,"")=0 or compare(skulookup,"")=0 then
+		elsif compare(skulookup,"zzeupcnr")=0 then
+			data = select(db_conn,"SELECT style,color_code,lbl_code,dimension,sizebucket,"&
+				"size_desc FROM "&skulookup&" WHERE upc_num=\'"&sku[1..11]&"\'")
+			if length(data)>0 and length(data[1])>5 then
+				style = trim(data[1][1])
+				color = trim(data[1][2])
+				label = trim(data[1][3])
+				dim = trim(data[1][4])
+				sizebk = sprintf("%d",data[1][5])
+				sizename = trim(data[1][6])
+			end if
+		elsif compare(skulookup,"zzxcstdr")=0 then
+			if compare(cust_code,"BCFTY")=0 then
+				c_op = "LIKE"
+				sku = sku & "%"
+			end if
+			data = select(db_conn,"SELECT style,color_code,lbl_code,dimension,size_bk,"&
+				"size_desc FROM "&skulookup&" WHERE cust_style "&c_op&" \'"&sku&"\' AND "&
+				"customer=\'"&cust_code&"\'")
+			if length(data)>0 and length(data[1])>5 then
+				style = trim(data[1][1])
+				color = trim(data[1][2])
+				label = trim(data[1][3])
+				dim = trim(data[1][4])
+				sizebk = sprintf("%d",data[1][5])
+				sizename = trim(data[1][6])
+			end if
+		end if
+	elsif compare(seg[1],"ZA")=0 then -- seg[2] = action
+		if length(seg)<2 then
+			junk = message_box("The ZA segment is malformed.  Continue?",
+				"Parse error",MB_YESNO)
+			if junk = IDYES then
+				action = 0
+			else
+				close(fp)
+				return
+			end if
+		elsif compare(seg[2],"QS")=0 then
+			action = 1
+		elsif compare(seg[2],"QR")=0 then
+			action = 2
+		elsif compare(seg[2],"OH")=0 then
+			action = 3
+		elsif compare(seg[2],"QA")=0 then
+			action = 4
+		elsif compare(seg[2],"QP")=0 then
+			action = 5
+		else
+			action = 0 -- Unrecognized action code
+		end if
+	elsif compare(seg[1],"SDQ")=0 and action > 0 then
+		for sctr = 4 to length(seg) by 2 do
+			store = seg[sctr]
+			if compare(cust_code,"BCFTY")=0 and length(store)<3 then
+				while length(store) < 3 do
+					store = "0"&store
+				end while
+			end if
+			store_state = ""
+			store_region = ""
+			qty_list = {0,0,0,0,0}
+			if length(seg) >= sctr+1 then
+				junk = value(seg[sctr+1])
+				if junk[1] = GET_SUCCESS then
+					qty_list[action] += junk[2]
+				end if
+			end if
+			data = select(db_conn,"SELECT state FROM zzxstorr WHERE customer=\'"&cust_code&
+				"\' AND store=\'"&store&"\'")
+			if length(data)>0 and length(data[1])>0 then
+				store_state = trim(data[1][1])
+				for rctr = 1 to length(regions) do
+					if find(store_state,regions[rctr]) then
+						store_region = sprintf("%d",rctr)
+						exit
+					end if
+				end for
+			end if
+			
+			-- Does record already exist in database?
+			data = select(db_conn,"SELECT * FROM mjs_852_sum WHERE customer=\'"&
+				cust_code&"\' AND report_date=\'"&report_date&"\' AND style=\'"&
+				style&"\' AND color_code=\'"&color&"\' AND lbl_code=\'"&label&
+				"\' AND dimension=\'"&dim&"\' AND size_bk=\'"&sizebk&"\' AND "&
+				"store=\'"&store&"\'")
+			if length(data) > 0 then	-- Sum qty_list to data & update
+				update(db_conn,"UPDATE mjs_852_sum SET "&
+					sprintf("qty_sold=%d, qty_return=%d, qty_onhand=%d, qty_ats=%d, "&
+					"qty_onorder=%d ",{data[1][12]+qty_list[1],data[1][13]+qty_list[2],
+					data[1][14]+qty_list[3],data[1][15]+qty_list[4],data[1][16]+qty_list[5]})&
+					"WHERE pkey="&sprintf("%d",data[1][1]))
+				recs_updated = recs_updated + 1
+			else	-- New record
+				update(db_conn,"INSERT mjs_852_sum (customer,report_date,"&
+					"style,color_code,lbl_code,dimension,size_bk,size_name,store,retail,"&
+					"qty_sold,qty_return,qty_onhand,qty_ats,qty_onorder,store_state,"&
+					"store_region) VALUES (\'"&cust_code&"\',\'"&report_date&"\',\'"&
+					style&"\',\'"&color&"\',\'"&label&"\',\'"&dim&"\',\'"&sizebk&"\',\'"&
+					sizename&"\',\'"&store&"\',0,"&sprintf("%d,%d,%d,%d,%d,",qty_list)&
+					"\'"&store_state&"\',\'"&store_region&"\')")
+				recs_added = recs_added + 1
+			end if
+		end for
+	end if
+
+  end while
+  close(fp)
+  setText(ResultText, sprintf("%d records added.\n%d records updated.",{recs_added,recs_updated}))
+
+end procedure
+setHandler(ProcessButton,w32HClick,routine_id("onClick_ProcessButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_FindButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  atom okfile, subloop
+  atom wlidx, fp, segterm, elemterm
+  sequence path, fname, fdate, tdate, dtype
+  sequence ISA, GS, UPC, SRID, TP
+  sequence seg
+  whitelist = {}
+
+  path = getText(PathList)
+  fdate = getText(FromDate)
+  tdate = getText(ToDate)
+  if find(length(fdate),{0,8,10})=0 or find(length(tdate),{0,8,10})=0 then
+    junk = message_box("Dates must be formatted as MM/DD/YYYY.  Thanks.",
+         "Unrecognized date",MB_OK)
+    return
+  end if
+  if length(fdate)=8 then
+    fdate = fdate[1..6]&"20"&fdate[7..8]
+  end if
+  if length(tdate)=8 then
+    tdate = tdate[1..6]&"20"&tdate[7..8]
+  end if
+  dt_fdate = {0,0,0}
+  dt_tdate = {0,0,0}
+  junk = value(fdate[1..2])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[2] = junk[2]
+  end if
+  junk = value(fdate[4..5])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[3] = junk[2]
+  end if
+  junk = value(fdate[7..10])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[1] = junk[2]
+  end if
+  junk = value(tdate[1..2])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[2] = junk[2]
+  end if
+  junk = value(tdate[4..5])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[3] = junk[2]
+  end if
+  junk = value(tdate[7..10])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[1] = junk[2]
+  end if
+  UPC = getText(UPCEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  dtype = "852"
+  SRID = ""
+  TP = upper(getText(TPEdit))
+  for ctr = 1 to length(TPList) do
+    if compare(TP,upper(TPList[ctr][2]))=0 then
+      SRID = TPList[ctr][1]
+      exit
+    end if
+  end for
+
+  eraseItems(ResultList)
+  junk = walk_dir(path,routine_id("pop_whitelist1"),1)
+  if length(whitelist)=1 then
+    setText(ResultText, sprintf("I found %d file within the date range.",length(whitelist)))
+  else
+    setText(ResultText, sprintf("I found %d files within the date range.",length(whitelist)))
+  end if
+
+  wlidx = 1
+  while wlidx <= length(whitelist) do
+    fp = open(whitelist[wlidx],"r")
+    if fp < 2 then
+      whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+    else
+      setText(ResultText,sprintf("Scanning %d/%d: \n\r%s",{wlidx-1,length(whitelist),whitelist[wlidx]}))
+      okfile = 0
+      line = get_bytes(fp,106)
+      while sequence(line) and length(line)>0 and okfile = 0 do
+        if length(line)=106 then
+--        if length(line) = 106 and compare(line[1..3],"ISA")=0 and
+--           (length(ISA)=0 or compare(line[91..99],ISA)=0) then
+          -- Do I have a valid ISA segment?
+          if compare(line[1..3],"ISA")=0 then
+            -- Does my ISA control number match my filter?
+            if (length(ISA)>0 and compare(line[91..99],ISA)!=0) or
+               -- Does my customer match my filter (send/receive ID)?
+               (length(SRID)>0 and compare(trim(line[55..69]),SRID)!=0 and
+                compare(trim(line[36..50]),SRID)!=0) then
+              -- No.
+              segterm = line[106]
+              elemterm = line[4]
+              subloop = 1
+              while length(line)=106 and subloop=1 do
+                line = get_bytes(fp,106)
+                if match(segterm&"IEA"&elemterm,line)>0 then
+                  line = line[match(segterm&"IEA"&elemterm,line)+5..length(line)]
+                  line = line[find(segterm,line)+1..length(line)]
+                  line = line & get_bytes(fp,106-length(line))
+                  if length(line)=106 and compare(line[1..3],"ISA")=0 then
+                    elemterm = line[4]
+                    segterm = line[106]
+                    if compare(line[91..99],ISA)=0 then
+                      subloop = 0
+                    end if
+                  end if
+                end if
+              end while
+              if subloop = 1 then
+                -- There are no matching ISA segments in this file.
+                exit
+              end if
+              line = ""
+            else
+              -- Yes.
+              elemterm = line[4]
+              segterm = line[106]
+              line = ""
+            end if
+          else
+            -- Not a valid X12 file.
+            exit
+          end if
+          c = getc(fp)
+          while c >= 0 and c != segterm do
+            line = line & c
+            c = getc(fp)
+          end while
+          if length(line) >= 13 and (compare(line[1..2],"GS")=0 or
+             (compare(dtype,"997")=0 and compare(line[1..3],"TA1")=0)) then
+            seg = parse_seg(line,elemterm)
+            if length(seg)>0 then
+              while 1 do
+                if (compare(dtype,"997")=0 and compare(seg[1],"TA1")=0) or
+                   (compare(seg[1],"GS")=0) then
+                   if ((length(seg) >= 7 and
+                      ((compare(dtype,"852")=0 and compare(seg[2],"PD")=0)) and
+                       (length(GS)=0 or compare(dtype,"997")=0 or compare(GS,seg[7])=0))) then
+                    -- proceed
+                  else
+                    -- This portion of the document fails the GS filter
+                    while length(seg)>0 and length(line)>0 and compare(seg[1],"GE")!=0 do
+                      line = ""
+                      c = getc(fp)
+                      while c >= 0 and c != segterm do
+                        line = line & c
+                        c = getc(fp)
+                      end while
+                      seg = parse_seg(line,elemterm)
+                    end while
+                  end if
+                end if
+                -- All other segments in a document
+                line = ""
+                c = getc(fp)
+                while c >= 0 and c != segterm do
+                  line = line & c
+                  c = getc(fp)
+                end while
+                if length(line)=0 then
+                  exit
+                end if
+                seg = parse_seg(line,elemterm)
+                if length(seg)=0 then
+                  line = ""
+                  exit
+                end if
+                if compare(seg[1],"IEA")=0 then
+                  -- there are multiple ISAs in this document
+                  line = get_bytes(fp,106)
+                  if length(line)<106 then
+                    exit
+                  end if
+                  if compare(line[1..3],"ISA")!=0 then
+                    exit
+                  end if
+                  elemterm = line[4]
+                  segterm = line[106]
+                  if length(ISA)>0 and compare(line[91..99],ISA)!=0 then
+                    -- this one isn't valid
+                    seg = parse_seg(line,elemterm)
+                    while length(seg)>0 and length(line)>0 and compare(seg[1],"GE")!=0 do
+                      line = ""
+                      c = getc(fp)
+                      while c >= 0 and c != segterm do
+                        line = line & c
+                        c = getc(fp)
+                      end while
+                      seg = parse_seg(line,elemterm)
+                    end while
+                  else
+                    -- this one is valid
+                    line = ""
+                    c = getc(fp)
+                    while c >= 0 and c != segterm do
+                      line = line & c
+                      c = getc(fp)
+                    end while
+                    if length(line)=0 then
+                      exit
+                    end if
+                    seg = parse_seg(line,elemterm)
+                    if length(seg)=0 then
+                      line = ""
+                      exit
+                    end if
+                  end if
+                end if
+                if compare(dtype,"852")=0 then
+                  if length(UPC)=0 then
+                    okfile = 1 -- For now, take all 832s.  Add check for UPC.
+                  else
+                    if compare(seg[1],"LIN")=0 then
+                      for elemidx = 2 to length(seg) do
+                        if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                          okfile = 1
+                          exit
+                        end if
+                      end for
+                    end if
+                  end if
+                end if
+              end while
+            end if
+          end if
+        else
+          line = ""
+        end if
+        if okfile then
+          exit
+        end if
+        line = line & get_bytes(fp,106)
+      end while
+      close(fp)
+      if not okfile then
+        whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+      else
+        wlidx = wlidx + 1
+      end if
+    end if
+  end while
+
+  for ctr = 1 to length(whitelist) do
+    addItem(ResultList,whitelist[ctr])
+  end for
+
+  if getCount(ResultList) >= 1 then
+    setIndex(ResultList,1)
+  end if
+
+  if length(whitelist)=1 then
+    setText(ResultText,sprintf("I found %d file.  To view it, " &
+          "click the \"Process\" button.",{length(whitelist)}))
+  elsif length(whitelist)=0 then
+    setText(ResultText,"I didn\'t find any files.  Please adjust your filters and try again.")
+  else
+    setText(ResultText,sprintf("I found %d files.  Select the file you wish to use " &
+          "and click the \"Process\" button.",{length(whitelist)}))
+  end if
+
+end procedure
+setHandler(FindButton,w32HClick,routine_id("onClick_FindButton"))
+
+--------------------------------------------------------------------------------
+-- MAIN
+--------------------------------------------------------------------------------
+
+read_INI()
+if initODBC() then end if
+db_conn = openConnectionODBC("DataNOTA","sa","bcadmin")
+WinMain( X12Win,Normal )
+cleanUpODBC()

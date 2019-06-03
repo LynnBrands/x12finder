@@ -1,0 +1,339 @@
+#Version 0.18.23r
+#Counter: 14
+#WinCounter: 1
+#Window 1
+#TabInfo
+TabText: Layer 0
+TabRenamed: 0
+TabNumber: 0
+TabsetLayer: 0
+#Control: Window1
+X       : 0
+Y       : 0
+CX      : 400
+CY      : 300
+ControlLayer: 0
+Title   : X12 Finder 2.0
+Class   : Window
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : 
+Visible : 1
+BkColor : 0
+EnableC : 1
+Style   : 0
+TypStyle: 
+ExStyle : 0
+Local : 1
+
+#Control: LText4
+AWindow : 5
+X       : 4
+Y       : 12
+CX      : 70
+CY      : 20
+ControlLayer: 0
+Title   : Look in:
+Class   : LText
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : Combo3
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 2
+Local : 1
+
+#Control: Combo3
+AWindow : 5
+X       : 92
+Y       : 12
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : LookInCombo
+Class   : Combo
+Enabled : 0
+Checked : 0
+Parent  : LText4
+PClass  : LText
+SeqParentName  : LText4
+SeqParentClass  : LText
+SeqChildName  : 
+DirParent : LText4
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 3
+Local : 1
+
+#ListValues: Combo3
+G:\GEAI\Tranprod\Arch
+G:\Excel350\Audit
+J:\ExternalData\#2005
+J:\IntIn\#2005
+J:\IntOut\#2005
+#EndListValues
+
+#Control: LText6
+AWindow : 5
+X       : 4
+Y       : 40
+CX      : 75
+CY      : 20
+ControlLayer: 0
+Title   : Reference #
+Class   : LText
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : RefNumEdit
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 4
+Local : 1
+
+#Control: RefNumEdit
+AWindow : 5
+X       : 92
+Y       : 40
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : RefNum
+Class   : EditText
+Enabled : 0
+Checked : 0
+Parent  : LText6
+PClass  : LText
+SeqParentName  : LText6
+SeqParentClass  : LText
+SeqChildName  : 
+DirParent : LText6
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 5
+Local : 1
+
+#Control: Group7
+AWindow : 5
+X       : 4
+Y       : 68
+CX      : 180
+CY      : 200
+ControlLayer: 0
+Title   : Document Types
+Class   : Group
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : Radio9
+SeqChildName  : Radio11
+SeqChildName  : Radio8
+SeqChildName  : Radio10
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 6
+Local : 1
+
+#Control: Radio8
+AWindow : 5
+X       : 20
+Y       : 90
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : 856 (ASN)
+Class   : Radio
+Enabled : 0
+Checked : 1
+Parent  : Group7
+PClass  : Group
+SeqParentName  : Group7
+SeqParentClass  : Group
+SeqChildName  : 
+DirParent : Group7
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 7
+Local : 1
+
+#Control: EditText13
+AWindow : 5
+X       : 268
+Y       : 92
+CX      : 70
+CY      : 20
+ControlLayer: 0
+Title   : EditText13
+Class   : EditText
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : 
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 11
+Local : 1
+
+#Control: Radio9
+AWindow : 5
+X       : 20
+Y       : 120
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : 810 (Invoice)
+Class   : Radio
+Enabled : 0
+Checked : 0
+Parent  : Group7
+PClass  : Group
+SeqParentName  : Group7
+SeqParentClass  : Group
+SeqChildName  : 
+DirParent : Group7
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 8
+Local : 1
+
+#Control: EditText14
+AWindow : 5
+X       : 268
+Y       : 124
+CX      : 48
+CY      : 20
+ControlLayer: 0
+Title   : EditText14
+Class   : EditText
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : 
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 12
+Local : 1
+
+#Control: Radio10
+AWindow : 5
+X       : 20
+Y       : 150
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : 850 (PO)
+Class   : Radio
+Enabled : 0
+Checked : 0
+Parent  : Group7
+PClass  : Group
+SeqParentName  : Group7
+SeqParentClass  : Group
+SeqChildName  : 
+DirParent : Group7
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 9
+Local : 1
+
+#Control: Radio11
+AWindow : 5
+X       : 20
+Y       : 180
+CX      : 148
+CY      : 20
+ControlLayer: 0
+Title   : 997 (FA)
+Class   : Radio
+Enabled : 0
+Checked : 0
+Parent  : Group7
+PClass  : Group
+SeqParentName  : Group7
+SeqParentClass  : Group
+SeqChildName  : 
+DirParent : Group7
+Visible : 1
+EnableC : 1
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 10
+Local : 1
+
+#Control: FindButton
+AWindow : 5
+X       : 296
+Y       : 232
+CX      : 88
+CY      : 28
+ControlLayer: 0
+Title   : Find it now!
+Class   : PushButton
+Enabled : 0
+Checked : 0
+Parent  : 
+PClass  : 
+SeqParentName  : 
+SeqParentClass  : 
+SeqChildName  : 
+Visible : 1
+EnableC : 1
+FontName : Arial Black
+FontPts : 10
+Style   : 
+TypStyle: 
+ExStyle : 0
+TabOrder : 1
+Local : 1
+

@@ -1,0 +1,1999 @@
+with trace
+-- X12 Finder 2.31
+-- Since the Windows XP/2K? Search program is so utterly worthless, I decided
+-- to put together a more integrated solution for Notations, Inc.
+-- This program will locate a series of X12 documents meeting the search
+-- criteria and display a list.  From the list, the user will be able to
+-- print the X12 document vertically, as well as the matching FA.
+
+-- Written by Michael J. Sabal
+
+--------------------------------------------------------------------------------
+-- History log
+--------------------------------------------------------------------------------
+-- v. < 2.0 - based on X12Viewer, with other dependencies
+-- v. 2.00a - 25 October 2005 - initial search screen
+-- v. 2.00b - 7 November 2005 - view & print screen
+-- v. 2.10a - 10 April 2006 - issue 01: Fix the 32KB limit in the viewer.
+-- v. 2.10b - 10 April 2006 - issue 02: Turn off line wrapping in the viewer.
+-- v. 2.10c - 11 April 2006 - issue 09: Add search in 860
+--                          - issue 13: Don't hang on incomplete files
+--                          - issue 05: Allow searching by carton number on ASNs
+--                          - issue 08: Allow searching by UPC
+-- v. 2.10d - 11 April 2006 - issue 04: Add "Include filename header" check when printing
+--                          - issue 14: Add page numbers when printing filename header
+-- v. 2.10e - 11 April 2006 - issue 11: Cut out ISA/IEA groups that don't match the filter criteria
+--                          - issue 12: Cut out the GS/GE groups that don't match the filter criteria
+--                          - issue 10: Cut out ST/SE groups that don't match the filter criteria
+--                          - issue 16: Use undolist to recover skipped line at the end of each page.
+-- v. 2.11a - 14 April 2006 - issue 06: Add "Find in doc" to viewer.
+-- v. 2.11b - 18 April 2006 - issue 03: Add "Find FA" functionality.
+-- v. 2.11c - 20 April 2006 - issue 07: Use INI file for initial directory list and last search.
+-- v. 2.11d - 21 April 2006 - issue 15: Include button to automatically open with Notepad.
+-- v. 2.12 Release - 21 April 2006
+-- v. 2.12b - 16 Jan 2007 - updated default directories for the new year.
+-- v. 2.20a - 15 Mar 2007 - issue 21: Search for 832 docs
+-- v. 2.20b - 23 Apr 2007 - issue 22: Some invoices have a GS code of OIN instead of IN.
+-- v. 2.21a - 31 Oct 2007 - issue 20: Allow search by send/recv ID
+--                        - issue 19: Search for PO # in both BEG04 and BEG05 on 850 documents
+--                        - updated default directories for 2008.
+-- v. 2.30a - 25 Jan 2011 - updated default directories for 2011 & BC-EDI and customer list.
+-- v. 2.30b - 12 Apr 2011 - issue 23: Fixed bug where BOL find on 810 failed to locate the document.
+-- v. 2.30c -  9 Sep 2011 - updated default directories for BC-EDI and TP list.
+-- v. 2.31a - 12 Oct 2011 - enhancements for eVision:
+--						  - Issue 25: Notepad isn't opening consistently: See requirement note in onClick_NotepadButton()
+--						  - Issue 24: Add requeue button (started: still need to complete the requeue flat file routine)
+-- v. 2.31b - 15 Nov 2011 - Add Saks 5th Avenue to TP list
+-- v. 2.31c - 10 May 2012 - Issue 27: FindFA needs to look in v:\x12\inbound
+--                        - Issue 29: Search by invoice number
+-- v. 2.32a -  7 Jun 2012 - Convert to Euphoria 4
+--------------------------------------------------------------------------------
+-- To do list
+--------------------------------------------------------------------------------
+-- 17: Checkbox to view file formatted or unformatted.
+-- 18: Provide quantity totals for POs and BOLs
+-- 24: Add requeue button
+-- +26: The file list dropdown is no longer readable - fixed after switching to Lexicom
+-- 28: Compare changes between two versions of the same document
+-- 30: << placeholder >>
+--------------------------------------------------------------------------------
+-- Limits
+--------------------------------------------------------------------------------
+-- 1. The "Print All" button will print the entire file, regardless of
+--    whatever filters are presently active.
+-- 2. A single page will still only hold about 32K of data.
+-- 3. "Find in Doc" will only locate the first instance of a query.
+-- 4. If more than one ISA/GS control group are active, "Find FA" will only
+--    check the last on a page.
+--------------------------------------------------------------------------------
+-- INCLUDES
+--------------------------------------------------------------------------------
+
+include Win32Lib.ew  -- David Cuny, Derek Parnell, etc.
+include std\get.e
+include std\io.e
+include std\win32\msgbox.e
+include std\filesys.e
+include std\wildcard.e
+include std\text.e
+include datetime.e   -- (c) 2001 CyrekSoft
+-- include window.ew    -- Thomas Parslow (PatRat)
+without warning
+
+--------------------------------------------------------------------------------
+-- VARIABLES & CONSTANTS
+--------------------------------------------------------------------------------
+constant MODE_X12 = 1
+constant MODE_FLAT = 2
+constant today = date()
+sequence whitelist, dt_fdate, dt_tdate
+sequence pgptr, fname
+atom curpg, segterm, elemterm, findmode
+sequence srID, GScn, GStype, ISAdate, ISAtime
+sequence INIoptions
+atom INIflag
+
+pgptr = {}
+curpg = 1
+INIoptions = {}
+INIflag = 1
+findmode = MODE_X12
+
+constant TPList = {
+{"",""},
+{"AMAZON","Amazon"},
+{"001695568GP","AAFES"},
+{"001695568GT","AAFES Test"},
+{"8137472355","Bealls"},
+{"6123830000","Belk"},
+{"6123830200","Belk 856"},
+{"6113310072","Bloomingdales"},
+{"6113310272","Bloomingdales 856"},
+{"6130110000","Bon-Ton"},
+{"014492501","Boscov"},
+{"6126750000","Burlington Coat Factory"},
+{"054744677","Charming Shoppes"},
+{"SPSCHRISBANKS","Christopher & Bank"},
+--{"6112391050","Dillards"},
+{"5032337598","Fred Meyer"},
+{"102294774","Gordman"},
+--{"UPCEXPDATA","GXS Catalog"},
+{"049123995","Hamricks"},
+{"120812854","Inovis Catalog"},
+--{"6111355027","JC Penney 753"},
+--{"6111350027","JC Penney 754"},
+--{"6111355001","JC Penney 810"},
+--{"6111350020","JC Penney 812"},
+--{"6111350021","JC Penney 824"},
+--{"6111350003","JC Penney 850"},
+--{"6111355038","JC Penney 855"},
+--{"6111355005","JC Penney 856"},
+{"6111350009","JC Penney 864"},
+--{"6111355002","JC Penney Cat 810"},
+--{"6111350004","JC Penney Cat 850"},
+--{"6111355006","JC Penney Cat 856"},
+{"4043517987","K&G Menswear"},
+--{"4147037000","Kohls"},
+{"6113310071","Macys East"},
+{"6113310271","Macys East 856"},
+{"6113310088","Macys.com"},
+{"6113310288","Macys.com 856"},
+{"6113310072","Bloomingdales"},
+{"6113310272","Bloomingdales 856"},
+{"6113310079","Bloom.com"},
+{"6113310279","Bloom.com 856"},
+{"00695955T","Meijer"},
+{"007942915","Nordstrom"},
+{"050357789","Pamida"},
+{"6135630001","Peebles"},
+{"8044475255","Peebles 856"},
+{"006989867","Saks 5th Ave 850"},
+{"6092785376","Saks 5th Ave 856"},
+{"4142785783","Saks 5th Ave 810"},
+{"9254291001","Sears"},
+{"6136010000","ShopKo"},
+{"007041346","Steinmart"},
+{"6111332000","VF Outlet"},
+{"006940860","Von Maur"},
+{"925485US00","Wal-mart"}
+}
+
+--------------------------------------------------------------------------------
+--  Window X12Win
+--------------------------------------------------------------------------------
+
+constant X12Win = createEx( Window, "X12 Finder 2.32", 0, Default, Default, 450, 410, 0, 0 )
+constant Group7 = createEx( Group, "Document Types", X12Win, 4, 68, 180, 200, 0, 0 )
+constant FindButton = createEx( PushButton, "Find it now!", X12Win, 280, 282, 90, 30, 0, 0 )
+constant LText4 = createEx( LText, "Look in:", X12Win, 4, 15, 40, 20, 0, 0 )
+constant PathList = createEx( Combo, "", X12Win, 50, 12, 200, 20*6, 0, 0 )
+constant LText6 = createEx( LText, "PO #", X12Win, 4, 43, 40, 20, 0, 0 )
+constant PONumEdit = createEx( EditText, "", X12Win, 50, 40, 75, 20, 0, 0 )
+constant LText17 = createEx ( LText, "BOL #", X12Win, 130, 43, 40, 20, 0, 0 )
+constant BOLNumEdit = createEx( EditText, "", X12Win, 175, 40, 75, 20, 0, 0 )
+constant LText18 = createEx ( LText, "ISA", X12Win, 255, 43, 30, 20, 0, 0 )
+constant ISAEdit = createEx ( EditText, "", X12Win, 290, 40, 50, 20, 0, 0 )
+constant LText19 = createEx ( LText, "GS", X12Win, 345, 43, 30, 20, 0, 0 )
+constant GSEdit = createEx (EditText, "", X12Win, 380, 40, 50, 20, 0, 0 )
+constant Radio8 = createEx( Radio, "856 (ASN)", Group7, 16, 22, 148, 20, 0, 0 )
+constant Radio9 = createEx( Radio, "810 (Invoice)", Group7, 16, 52, 148, 20, 0, 0 )
+constant Radio10 = createEx( Radio, "850 (PO)", Group7, 16, 82, 148, 20, 0, 0 )
+constant Radio12 = createEx( Radio, "860 (PO Change)",Group7,16,112,148,20,0,0 )
+constant Radio13 = createEx( Radio, "832 (Catalog)",Group7, 16, 142,148,20,0,0 )
+constant Radio11 = createEx( Radio, "997 (FA)", Group7, 16, 172, 148, 20, 0, 0 )
+constant UPCLabel = createEx( LText, "UPC #", X12Win, 190, 75, 70, 20, 0, 0 )
+constant UPCEdit = createEx( EditText, "", X12Win, 268, 72, 140, 20, 0, 0 )
+constant UCCLabel = createEx( LText, "Carton #", X12Win, 190, 107, 70, 20, 0, 0 )
+constant UCCEdit = createEx( EditText, "", X12Win, 268, 104, 140, 20, 0, 0 )
+constant InvLabel = createEx( LText, "Invoice #", X12Win, 190, 142, 70, 20, 0, 0 )
+constant InvEdit = createEx( EditText, "", X12Win, 268, 139, 140, 20, 0, 0 )
+constant TPLabel = createEx( LText,"Customer", X12Win, 190,169,70,20,0,0)
+constant TPEdit = createEx( Combo, "", X12Win, 268, 166, 140, 20*6, 0, 0)
+constant FromDate = createEx( EditText, sprintf("%02d/%02d/%04d",{today[2],today[3],today[1]+1900}),
+                      X12Win, 268, 195, 70, 20, 0, 0 )
+constant ToDate = createEx( EditText, sprintf("%02d/%02d/%04d",{today[2],today[3],today[1]+1900}),
+                      X12Win, 268, 227, 70, 20, 0, 0 )
+constant LText15 = createEx( LText, "From Date:", X12Win, 190, 198, 70, 20, 0, 0 )
+constant LText16 = createEx( LText, "To Date:", X12Win, 190, 230, 70, 20, 0, 0 )
+constant ResultText = createEx( CText, "", X12Win, 190, 250, 250, 40, 0, 0 )
+constant CompareButton = createEx( PushButton, "Compare", X12Win, 4, 320, 60, 20, 0, 0 )
+constant CompareList = createEx( DropDownList, "", X12Win, 70, 320, 300, 20*6, 0, 0 )
+constant LText24 = createEx( LText, "Results:", X12Win, 4, 350, 40, 20, 0, 0 )
+constant ResultList = createEx( DropDownList, "", X12Win, 50, 350, 320, 20*6, 0, 0 )
+constant ViewX12Button = createEx( PushButton, "View X12", X12Win, 380, 350, 60, 20, 0, 0 )
+constant NotepadButton = createEx( PushButton, "-->Notepad", X12Win, 380, 320, 60, 20, 0, 0 )
+--------------------------------------------------------------------------------
+-- X12 viewer window
+constant ViewWin = createEx( Window, "View X12 document", X12Win, 0, 0, 600, 510, 0, 0 )
+constant ViewPrintButton = createEx( PushButton, "Print", ViewWin, 0, 0, 70, 25, 0, 0 )
+constant ViewPrintAllButton = createEx( PushButton, "Print All",ViewWin,70,0,70,25,0,0 )
+constant ViewFindFAButton = createEx( PushButton, "Find FA", ViewWin, 140, 0, 70, 25, 0, 0 )
+constant ViewCloseButton = createEx( PushButton, "Close", ViewWin, 210, 0, 70, 25, 0, 0 )
+constant ViewPrevButton = createEx( PushButton, "<", ViewWin, 300, 0, 25, 25, 0, 0 )
+constant ViewPageLabel = createEx( CText, "1", ViewWin, 330, 10, 25, 18, 0, 0 )
+constant ViewNextButton = createEx( PushButton, ">", ViewWin, 360, 0, 25, 25, 0, 0 )
+constant ViewTotalsLabel = createEx( LText, "", ViewWin, 390, 10, 175, 18, 0, 0 )
+constant ViewDisplayFormat = createEx( CheckBox, "Display a formatted summary", ViewWin, 25, 30, 200, 25, 0, 0 )
+constant ViewTotals2Label = createEx( LText, "", ViewWin, 390, 30, 175, 18, 0, 0 )
+constant ViewPrintHeaderCheck = createEx( CheckBox, "Include file and path when printing",
+                              ViewWin, 25,60,200,25,0,0)
+constant ViewFindinDocLabel = createEx(RText,"Find in doc:",ViewWin,250,68,60,20,0,0)
+constant ViewFindinDocEdit = createEx(EditText,"",ViewWin,320,60,180,25,0,0)
+constant ViewFindinDocButton = createEx(PushButton,"Find",ViewWin,510,60,60,25,0,0)
+constant ViewX12 = createEx( MleText, "", ViewWin, 10, 90, 580, 380, WS_HSCROLL+WS_VSCROLL, 0 )
+
+
+setFont( FindButton,"Arial Black",10,Normal)
+addItem(PathList, "\\\\BC-APP1\\Vg\\X12\\Inbound")
+addItem(PathList, "\\\\BC-APP1\\Vg\\X12\\Outbound")
+addItem(PathList, "\\\\BC-APP1\\Vg\\Login\\NOTA\\EDI\\Inbound")
+addItem(PathList, "J:\\IntIn\\#2011")
+addItem(PathList, "J:\\IntOut\\#2011")
+addItem(PathList, "J:\\IntIn\\#2010")
+addItem(PathList, "J:\\IntOut\\#2010")
+addItem(PathList, "J:\\IntIn\\#2009")
+addItem(PathList, "J:\\IntOut\\#2009")
+addItem(PathList, "\\\\BC-EDI\\TIE\\evision\\data\\batch")
+addItem(PathList, "\\\\BC-EDI\\Lexicom")
+setCheck( Radio8, w32True )
+for ctr = 1 to length(TPList) do
+  addItem(TPEdit, TPList[ctr][2])
+end for
+setIndex(TPEdit,1)
+setEnable(CompareButton,w32False)
+setEnable(CompareList,w32False)
+
+--------------------------------------------------------------------------------
+-- SUPPORT ROUTINES
+--------------------------------------------------------------------------------
+
+function pop_whitelist1(sequence path, sequence direntry)
+
+  if find('d',direntry[D_ATTRIBUTES]) then
+    -- no directories
+    return 0
+  end if
+  if daysDifference(dt_fdate,direntry[4..6]) < 0 then
+    -- direntry is too old
+    return 0
+  end if
+  if daysDifference(direntry[4..6],dt_tdate) < 0 then
+    -- direntry is too recent
+    return 0
+  end if
+
+  whitelist = append(whitelist,path&'\\'&direntry[1])
+
+  return 0
+
+end function
+
+--------------------------------------------------------------------------------
+
+function parse_seg(sequence line, atom elemterm)
+
+  sequence seg
+  atom i1, i2
+
+            seg = {}
+            i1 = 1
+            i2 = 0
+            for i = 1 to length(line) do
+              if line[i] = elemterm then
+                i2 = i-1
+                seg = append(seg,line[i1..i2])
+                i1 = i + 1
+              end if
+            end for
+            seg = append(seg,line[i1..length(line)])
+
+
+  return seg
+
+end function
+
+--------------------------------------------------------------------------------
+
+function count(object lookin, object lookfor)
+
+  atom found
+  found = 0
+
+  if atom(lookin) and sequence(lookfor) then
+    return 0
+  elsif atom(lookin) and atom(lookfor) and lookin=lookfor then
+    return 1
+  elsif atom(lookin) and atom(lookfor) and lookin!=lookfor then
+    return 0
+  else
+    for ctr = 1 to length(lookin) do
+      if compare(lookin[ctr],lookfor)=0 then
+        found = found + 1
+      end if
+    end for
+    return found
+  end if
+
+  return found
+
+end function
+
+--------------------------------------------------------------------------------
+
+function trim(object s)
+
+  if not sequence(s) then
+    return s
+  end if
+
+  for ctr = 1 to length(s) do
+    if atom(s[ctr]) and s[ctr]>32 then
+      s = s[ctr..length(s)]
+      exit
+    end if
+    if ctr = length(s) then
+      return ""
+    end if
+  end for
+  for ctr = length(s) to 1 by -1 do
+    if atom(s[ctr]) and s[ctr]>32 then
+      s = s[1..ctr]
+      exit
+    end if
+  end for
+
+  return s
+
+end function
+
+--------------------------------------------------------------------------------
+-- INI PROCESSING
+--------------------------------------------------------------------------------
+
+procedure read_INI()
+
+  atom fp
+  object line
+
+  fp = open("x12finder.ini","r")
+  if fp < 2 then
+    INIflag = 0
+    return
+  end if
+
+  line = gets(fp)
+
+  while sequence(line) do
+    if match("[DIRLIST]",upper(line))>0 then
+      INIoptions = append(INIoptions,{"[DIRLIST]",{}})
+    elsif match("[LASTSEARCH]",upper(line))>0 then
+      INIoptions = append(INIoptions,{"[LASTSEARCH]",{}})
+    elsif length(trim(line))=0 then
+      -- do nothing
+    elsif line[1]='#' or line[1]=';' then
+      -- a comment
+    else
+      INIoptions[length(INIoptions)][2] = append(INIoptions[length(INIoptions)][2],trim(line))
+    end if
+    line = gets(fp)
+  end while
+  close(fp)
+
+  for ctr = 1 to length(INIoptions) do
+    if compare(INIoptions[ctr][1],"[DIRLIST]")=0 then
+      eraseItems(PathList)
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        addItem(PathList,INIoptions[ctr][2][ctr2])
+      end for
+    elsif compare(INIoptions[ctr][1],"[LASTSEARCH]")=0 then
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        line = upper(INIoptions[ctr][2][ctr2])
+        if match("FDATE=",line)=1 then
+          setText(FromDate,line[7..length(line)])
+        elsif match("TDATE=",line)=1 then
+          setText(ToDate,line[7..length(line)])
+        elsif match("ISA=",line)=1 then
+          setText(ISAEdit,line[5..length(line)])
+        elsif match("GS=",line)=1 then
+          setText(GSEdit,line[4..length(line)])
+        elsif match("PO=",line)=1 then
+          setText(PONumEdit,line[4..length(line)])
+        elsif match("BOL=",line)=1 then
+          setText(BOLNumEdit,line[5..length(line)])
+        elsif match("UPC=",line)=1 then
+          setText(UPCEdit,line[5..length(line)])
+        elsif match("UCC=",line)=1 then
+          setText(UCCEdit,line[5..length(line)])
+        elsif match("PATH=",line)=1 then
+          setText(PathList,line[6..length(line)])
+        elsif match("TP=",line)=1 then
+          setText(TPEdit,line[4..length(line)])
+        elsif match("DTYPE=856",line)=1 then
+          setCheck(Radio8,w32True)
+          setCheck(Radio9,w32False)
+          setCheck(Radio10,w32False)
+          setCheck(Radio11,w32False)
+          setCheck(Radio12,w32False)
+        elsif match("DTYPE=810",line)=1 then
+          setCheck(Radio9,w32True)
+          setCheck(Radio8,w32False)
+          setCheck(Radio10,w32False)
+          setCheck(Radio11,w32False)
+          setCheck(Radio12,w32False)
+        elsif match("DTYPE=850",line)=1 then
+          setCheck(Radio10,w32True)
+          setCheck(Radio9,w32False)
+          setCheck(Radio8,w32False)
+          setCheck(Radio11,w32False)
+          setCheck(Radio12,w32False)
+        elsif match("DTYPE=997",line)=1 then
+          setCheck(Radio11,w32True)
+          setCheck(Radio9,w32False)
+          setCheck(Radio10,w32False)
+          setCheck(Radio8,w32False)
+          setCheck(Radio12,w32False)
+        elsif match("DTYPE=860",line)=1 then
+          setCheck(Radio12,w32True)
+          setCheck(Radio9,w32False)
+          setCheck(Radio10,w32False)
+          setCheck(Radio11,w32False)
+          setCheck(Radio8,w32False)
+        end if
+      end for
+    end if
+  end for
+
+
+end procedure
+
+--------------------------------------------------------------------------------
+
+procedure write_INI()
+
+  atom fp
+  sequence path, fdate, tdate, dtype
+  sequence PO,BOL,UPC,UCC,ISA,GS, TP
+
+  if not INIflag then
+    return
+  end if
+  path = getText(PathList)
+  fdate = getText(FromDate)
+  tdate = getText(ToDate)
+  PO = getText(PONumEdit)
+  BOL = getText(BOLNumEdit)
+  UPC = getText(UPCEdit)
+  UCC = getText(UCCEdit)
+  ISA = getText(ISAEdit)
+  GS = getText(GSEdit)
+  TP = getText(TPEdit)
+  if isChecked(Radio8) then
+    dtype = "856"
+  elsif isChecked(Radio9) then
+    dtype = "810"
+  elsif isChecked(Radio10) then
+    dtype = "850"
+  elsif isChecked(Radio11) then
+    dtype = "997"
+  elsif isChecked(Radio12) then
+    dtype = "860"
+  elsif isChecked(Radio13) then
+    dtype = "832"
+  end if
+
+  fp = open("x12finder.ini","w")
+  if fp < 2 then
+    return
+  end if
+
+  for ctr = 1 to length(INIoptions) do
+    if compare(INIoptions[ctr][1],"[DIRLIST]")=0 then
+      puts(fp,"[DIRLIST]\n")
+      for ctr2 = 1 to length(INIoptions[ctr][2]) do
+        puts(fp,INIoptions[ctr][2][ctr2]&"\n")
+      end for
+    end if
+  end for
+  puts(fp,"\n")
+  puts(fp,"[LASTSEARCH]\n")
+  puts(fp,"path="&path&"\n")
+  puts(fp,"dtype="&dtype&"\n")
+  puts(fp,"fdate="&fdate&"\n")
+  puts(fp,"tdate="&tdate&"\n")
+  puts(fp,"ISA="&ISA&"\n")
+  puts(fp,"GS="&GS&"\n")
+  puts(fp,"PO="&PO&"\n")
+  puts(fp,"BOL="&BOL&"\n")
+  puts(fp,"UPC="&UPC&"\n")
+  puts(fp,"UCC="&UCC&"\n")
+  puts(fp,"TP="&TP&"\n")
+  puts(fp,"\n")
+
+  close(fp)
+
+end procedure
+
+--------------------------------------------------------------------------------
+-- EVENT ROUTINES
+--------------------------------------------------------------------------------
+
+global procedure onClick_NotepadButton(integer self, integer event, sequence params)
+
+  object npHwnd, npeHwnd, junk
+  sequence fname, class, buffer
+  atom bufferPtr
+  fname = getText(ResultList)
+
+  -- Requirement: The file association must be set up in Windows for this to work.
+  shellExecute("open",fname,SW_SHOWNORMAL)
+
+--if 0 then   -- this section of code doesn't work.  More research is required.
+--  while find('\\',fname) do
+--    fname = fname[find('\\',fname)+1..length(fname)]
+--  end while
+--  sleep(1)
+--trace(1)
+--  npHwnd = window_GetHwnds(fname&'*')
+--  if length(npHwnd)>0 then
+--    npHwnd = npHwnd[1]
+--    npeHwnd = window_GetWindow(npHwnd,GW_CHILD)
+--    while npeHwnd > 0 do
+--      class = window_GetClassName(npeHwnd)
+--      if compare(upper(class),"EDIT")=0 then
+--        buffer = "This is really only a test.\nGreetings from Mars.\n"
+--        bufferPtr = allocate_string(buffer)
+--        junk = sendMessage(npeHwnd,#C,0,bufferPtr)
+--        free(bufferPtr)
+--        exit
+--      end if
+--      npeHwnd = window_GetWindow(npeHwnd,GW_HWNDNEXT)
+--    end while
+--  end if
+--end if
+
+end procedure
+setHandler(NotepadButton,w32HClick,routine_id("onClick_NotepadButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClose_X12Win(integer self, integer event, sequence params)
+
+  write_INI()
+
+end procedure
+setHandler(X12Win,w32HClose,routine_id("onClose_X12Win"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClose_ViewWin(integer self, integer event, sequence params)
+  setText(ViewFindFAButton,"Find FA")
+  setEnable(ViewFindFAButton,1)
+  setIndex(ResultList,1)
+end procedure
+setHandler(ViewWin,w32HClose,routine_id("onClose_ViewWin"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewCloseButton(integer self, integer event, sequence params)
+  setText(ViewX12,"")
+  closeWindow(ViewWin)
+end procedure
+setHandler(ViewCloseButton,w32HClick,routine_id("onClick_ViewCloseButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewPrintButton(integer self, integer event, sequence params)
+
+  atom mleCRLF, yPos, pgnum
+  object options
+  sequence buffer, fontMetric, pageSize
+
+  options = getPrinter()
+  if length(options)=0 then
+    return
+  end if
+  buffer = getText(ViewX12)
+
+  pgnum = 1
+  yPos = 0
+  fontMetric = getFontSize(Printer)
+  pageSize = getCtlSize(Printer)
+  if not startDoc(getText(ViewWin)) then
+    releasePrinter()
+    return
+  end if
+  if not startPage() then
+    releasePrinter()
+    return
+  elsif isChecked(ViewPrintHeaderCheck) then
+    wPuts({Printer,0,0},fname&"          "&sprintf("Page %d",pgnum))
+    yPos = (fontMetric[2] * 2)
+  end if
+  mleCRLF = match(13&10,buffer)
+  while mleCRLF > 0 do
+    wPuts({Printer,0,yPos},buffer[1..mleCRLF-1])
+    buffer = buffer[mleCRLF+2..length(buffer)]
+    yPos = yPos + fontMetric[2]
+    if yPos > (pageSize[2]-fontMetric[2]) then
+      if not endPage() then
+        releasePrinter()
+        return
+      else
+        pgnum = pgnum + 1
+      end if
+      if not startPage() then
+        releasePrinter()
+        return
+      elsif isChecked(ViewPrintHeaderCheck) then
+        wPuts({Printer,0,0},fname&"          "&sprintf("Page %d",pgnum))
+        yPos = (fontMetric[2] * 2)
+      else
+        yPos = 0
+      end if
+    end if
+    mleCRLF = match(13&10,buffer)
+  end while
+  wPuts(Printer,buffer)
+  if not endPage() then
+    releasePrinter()
+    return
+  end if
+  if not endDoc() then
+  end if
+
+  releasePrinter()
+
+end procedure
+setHandler(ViewPrintButton,w32HClick,routine_id("onClick_ViewPrintButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewPrintAllButton(integer self, integer event, sequence params)
+
+  atom mleCRLF, yPos, fp, pgnum
+  object options
+  object junk, line, c
+  sequence buffer, fontMetric, pageSize
+
+  options = getPrinter()
+  if length(options)=0 then
+    return
+  end if
+
+  fp = open(fname,"r")
+  if fp < 2 then
+    junk = message_box("The file you selected is not available.","File error",MB_ICONWARNING)
+    return
+  end if
+
+  buffer = ""
+  line = get_bytes(fp,106)
+  if length(line)=106 then
+    line = line[1..105]
+  end if
+  while sequence(line) and length(line)>0 do
+    buffer = buffer & line & segterm & 13 & 10
+    line = ""
+    c = getc(fp)
+    while c >= 0 and c != segterm do
+      line = line & c
+      c = getc(fp)
+    end while
+  end while
+  close(fp)
+
+  pgnum = 1
+  yPos = 0
+  fontMetric = getFontSize(Printer)
+  pageSize = getCtlSize(Printer)
+  if not startDoc(getText(ViewWin)) then
+    releasePrinter()
+    return
+  end if
+  if not startPage() then
+    releasePrinter()
+    return
+  elsif isChecked(ViewPrintHeaderCheck) then
+    wPuts({Printer,0,0},fname&"          "&sprintf("Page %d",pgnum))
+    yPos = (fontMetric[2] * 2)
+  end if
+  mleCRLF = match(13&10,buffer)
+  while mleCRLF > 0 do
+    wPuts({Printer,0,yPos},buffer[1..mleCRLF-1])
+    buffer = buffer[mleCRLF+2..length(buffer)]
+    yPos = yPos + fontMetric[2]
+    if yPos > (pageSize[2]-fontMetric[2]) then
+      if not endPage() then
+        releasePrinter()
+        return
+      else
+        pgnum = pgnum + 1
+      end if
+      if not startPage() then
+        releasePrinter()
+        return
+      elsif isChecked(ViewPrintHeaderCheck) then
+        wPuts({Printer,0,0},fname&"          "&sprintf("Page %d",pgnum))
+        yPos = (fontMetric[2] * 2)
+      else
+        yPos = 0
+      end if
+    end if
+    mleCRLF = match(13&10,buffer)
+  end while
+  wPuts(Printer,buffer)
+  if not endPage() then
+    releasePrinter()
+    return
+  end if
+  if not endDoc() then
+  end if
+
+  releasePrinter()
+
+
+end procedure
+setHandler(ViewPrintAllButton,w32HClick,routine_id("onClick_ViewPrintAllButton"))
+
+--------------------------------------------------------------------------------
+
+procedure requeueFlatFile(sequence name)
+	-- added 12 Oct 2011, version 2.31a
+
+end procedure
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewFindFAButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  sequence seg, dtype, wl_bak, path
+  sequence fdate,tdate
+  atom fp, wlidx, okfile, subloop
+  atom elemterm, segterm
+
+  if findmode = MODE_FLAT then
+	requeueFlatFile(getText(PathList))
+	return
+  end if
+  if length(ISAdate)<6 or length(GScn)=0 then
+    return
+  end if
+
+  srID = trim(srID)
+  GScn = trim(GScn)
+  GStype = trim(GStype)
+  setText(ViewFindFAButton,".Searching.")
+  path = getText(PathList)
+  fdate = ISAdate[3..4]&"/"&ISAdate[5..6]&"/20"&ISAdate[1..2]
+  tdate = getText(ToDate)
+  c = match("INTOUT",upper(path))
+	if c > 0 then
+		path = path[1..c-1]&"IntIn"&path[c+6..length(path)]
+	else
+		c = match("X12\\OUTBOUND",upper(path))
+		if c > 0 then
+			path = path[1..c-1]&"X12\\Inbound"&path[c+12..length(path)]
+		end if
+	end if
+
+  wl_bak = whitelist
+  whitelist = {}
+  junk = walk_dir(path,routine_id("pop_whitelist1"),1)
+  wlidx = 1
+  okfile = 0
+  while wlidx <= length(whitelist) do
+    fp = open(whitelist[wlidx],"r")
+    if fp < 2 then
+      whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+    else
+      okfile = 0
+      line = get_bytes(fp,106)
+      while sequence(line) and length(line)>0 and okfile = 0 do
+        if length(line)=106 then
+          -- Do I have a valid ISA segment?
+          if compare(line[1..3],"ISA")=0 then
+            -- Does my ISA send/recv ID match my filter?
+            if (length(srID)>0 and match(srID,line[36..50])=0) then
+              -- No.
+              segterm = line[106]
+              elemterm = line[4]
+              subloop = 1
+              while length(line)=106 and subloop=1 do
+                line = get_bytes(fp,106)
+                if match(segterm&"IEA"&elemterm,line)>0 then
+                  line = line[match(segterm&"IEA"&elemterm,line)+5..length(line)]
+                  line = line[find(segterm,line)+1..length(line)]
+                  line = line & get_bytes(fp,106-length(line))
+                  if length(line)=106 and compare(line[1..3],"ISA")=0 then
+                    elemterm = line[4]
+                    segterm = line[106]
+                    if match(srID,line[36..50])>0 then
+                      subloop = 0
+                    end if
+                  end if
+                end if
+              end while
+              if subloop = 1 then
+                -- There are no matching ISA segments in this file.
+                exit
+              end if
+              line = ""
+            else
+              -- Yes.
+              elemterm = line[4]
+              segterm = line[106]
+              line = ""
+            end if
+          else
+            -- Not a valid X12 file.
+            exit
+          end if
+          c = getc(fp)
+          while c >= 0 and c != segterm do
+            line = line & c
+            c = getc(fp)
+          end while
+          if length(line) >= 13 and (compare(line[1..2],"GS")=0 or
+             (compare(line[1..3],"TA1")=0)) then
+            seg = parse_seg(line,elemterm)
+            if length(seg)>0 then
+              while 1 do
+                if (compare(seg[1],"TA1")!=0) and
+                   (compare(seg[1],"GS")=0 and compare(seg[2],"FA")!=0) then
+                    -- This portion of the document fails the GS filter
+                    while length(seg)>0 and length(line)>0 and compare(seg[1],"GE")!=0 do
+                      line = ""
+                      c = getc(fp)
+                      while c >= 0 and c != segterm do
+                        line = line & c
+                        c = getc(fp)
+                      end while
+                      seg = parse_seg(line,elemterm)
+                    end while
+                end if
+                -- All other segments in a document
+                line = ""
+                c = getc(fp)
+                while c >= 0 and c != segterm do
+                  line = line & c
+                  c = getc(fp)
+                end while
+                if length(line)=0 then
+                  exit
+                end if
+                seg = parse_seg(line,elemterm)
+                if length(seg)=0 then
+                  line = ""
+                  exit
+                end if
+                if length(GScn)>0 and ((compare(seg[1],"AK1")=0 and
+                   (match(GScn,seg[3])>0) and compare(GStype,seg[2])=0)) then
+                  okfile = 1
+                  exit
+                end if
+              end while
+            end if
+          end if
+        else
+          line = ""
+        end if
+        if okfile then
+          exit
+        end if
+        line = line & get_bytes(fp,106)
+      end while
+      close(fp)
+      if not okfile then
+        whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+      else
+        wlidx = wlidx + 1
+      end if
+    end if
+  end while
+
+  if length(whitelist)>1 then
+    junk = message_box("There is more than one possible match.  Only the first will be displayed.",
+         "Too many FAs",MB_ICONWARNING)
+  elsif length(whitelist)=0 then
+    junk = message_box("I could not locate any FAs for this document.","No FAs found",MB_ICONWARNING)
+  end if
+  if length(whitelist)>=1 then
+    setEnable(ViewFindFAButton,0)
+    addItem(ResultList,whitelist[1])
+    setIndex(ResultList,getCount(ResultList))
+    junk = invokeHandler(ViewX12Button,w32HClick,{})
+  end if
+
+  whitelist = wl_bak
+  setText(ViewFindFAButton,"Find FA")
+
+end procedure
+setHandler(ViewFindFAButton,w32HClick,routine_id("onClick_ViewFindFAButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewPrevButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  sequence buffer, undolist
+  atom fp, skip
+  sequence PO, BOL, ISA, GS, UPC, UCC
+  sequence seg, dtype
+
+  if curpg <= 1 then
+    curpg = 1
+    setEnable(ViewPrevButton,0)
+    return
+  end if
+  if length(pgptr) < curpg - 1 then
+    junk = message_box("There is a problem accessing the previous page.","File error",MB_ICONWARNING)
+    return
+  end if
+
+  buffer = ""
+  skip = 0
+  undolist = {}
+  curpg = curpg - 1
+  fp = open(fname,"r")
+  if fp < 2 then
+    junk = message_box("The previous page is not available.","File error",MB_ICONWARNING)
+    curpg = curpg + 1
+    return
+  end if
+  junk = seek(fp,pgptr[curpg])
+  if junk != 0 then
+    junk = message_box("The previous page is not available.","File error",MB_ICONWARNING)
+    curpg = curpg + 1
+    return
+  end if
+
+  PO = getText(PONumEdit)
+  BOL = getText(BOLNumEdit)
+  UPC = getText(UPCEdit)
+  UCC = getText(UCCEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  if isChecked(Radio8) then
+    dtype = "856"
+  elsif isChecked(Radio9) then
+    dtype = "810"
+  elsif isChecked(Radio10) then
+    dtype = "850"
+  elsif isChecked(Radio11) then
+    dtype = "997"
+  elsif isChecked(Radio12) then
+    dtype = "860"
+  end if
+
+  line = ""
+  c = getc(fp)
+  while c >= 0 and c != segterm do
+    line = line & c
+    c = getc(fp)
+  end while
+  seg = parse_seg(line,elemterm)
+
+  while sequence(line) and length(line)>0 and length(buffer) < 32000 do
+
+    -- Filters
+    if length(seg)=0 then
+      -- do nothing
+    elsif (skip = 3 or skip = 0) and compare(seg[1],"ISA")=0 then
+      if length(ISA)=0 or match(ISA,line[91..99])>0 then
+        skip = 0
+      elsif length(ISA)>0 and match(ISA,line[91..99])=0 then
+        skip = 3
+      end if
+    elsif (skip = 2 or skip = 0) and compare(seg[1],"GS")=0 then
+      if length(GS)=0 or match(GS,seg[7])>0 then
+        skip = 0
+      elsif length(GS)>0 and match(GS,seg[7])=0 then
+        skip = 2
+      end if
+    elsif (skip = 1 or skip = 0) and compare(seg[1],"ST")=0 then
+      if compare(seg[2],dtype)=0 then
+        skip = 0
+      else
+        skip = 1
+      end if
+    elsif (skip = 1) and compare(seg[1],"GE")=0 then
+      skip = 0
+    elsif (skip = 2) and compare(seg[1],"IEA")=0 then
+      skip = 0
+    elsif (skip = 0) and compare(dtype,"856")=0 then
+      if compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"850")=0 then
+      if compare(seg[1],"BEG")=0 and length(PO)>0 and match(PO,seg[4])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"810")=0 then
+      if (compare(seg[1],"BIG")=0 and length(PO)>0 and match(PO,seg[5])=0) or
+         (compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0) then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    end if
+
+    if skip = 0 then
+      undolist = append(undolist,{length(buffer)+1,seg[1]})
+      buffer = buffer & line & segterm & 13 & 10
+    end if
+    line = ""
+    c = getc(fp)
+    while c >= 0 and c != segterm do
+      line = line & c
+      c = getc(fp)
+    end while
+    seg = parse_seg(line,elemterm)
+
+  end while
+  close(fp)
+
+  if curpg = 1 then
+    setEnable(ViewPrevButton,0)
+    setEnable(ViewNextButton,1)
+    setText(ViewPageLabel,sprintf("%d",curpg))
+  else
+    setEnable(ViewPrevButton,1)
+    setEnable(ViewNextButton,1)
+    setText(ViewPageLabel,sprintf("%d",curpg))
+  end if
+  setText(ViewX12,buffer)
+
+
+end procedure
+setHandler(ViewPrevButton,w32HClick,routine_id("onClick_ViewPrevButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewNextButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  sequence buffer, undolist
+  atom fp, skip
+  sequence PO, BOL, ISA, GS, UPC, UCC
+  sequence seg, dtype
+
+  buffer = ""
+  undolist = {}
+  skip = 0
+  curpg = curpg + 1
+  fp = open(fname,"r")
+  if fp < 2 then
+    junk = message_box("The next page is not available.","File error",MB_ICONWARNING)
+    setEnable(ViewNextButton,0)
+    curpg = curpg - 1
+    return
+  end if
+
+  if length(pgptr) < curpg - 1 then
+    curpg = length(pgptr) + 1
+  elsif length(pgptr) >= curpg then
+    junk = seek(fp,pgptr[curpg])
+  elsif curpg <= 1 then
+    junk = seek(fp,0)
+  else
+    junk = seek(fp,pgptr[curpg-1]+32000)
+  end if
+
+  if junk != 0 then
+    junk = message_box("The next page is not available.","File error",MB_ICONWARNING)
+    setEnable(ViewNextButton,0)
+    curpg = curpg - 1
+    return
+  end if
+  if length(pgptr) < curpg then
+    pgptr = append(pgptr,where(fp))
+  end if
+
+  PO = getText(PONumEdit)
+  BOL = getText(BOLNumEdit)
+  UPC = getText(UPCEdit)
+  UCC = getText(UCCEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  if isChecked(Radio8) then
+    dtype = "856"
+  elsif isChecked(Radio9) then
+    dtype = "810"
+  elsif isChecked(Radio10) then
+    dtype = "850"
+  elsif isChecked(Radio11) then
+    dtype = "997"
+  elsif isChecked(Radio12) then
+    dtype = "860"
+  end if
+
+  line = ""
+  c = getc(fp)
+  while c >= 0 and c != segterm do
+    line = line & c
+    c = getc(fp)
+  end while
+  seg = parse_seg(line,elemterm)
+  while sequence(line) and length(line)>0 and length(buffer) < 32000 do
+
+    -- Filters
+    if length(seg)=0 then
+      -- do nothing
+    elsif (skip = 3 or skip = 0) and compare(seg[1],"ISA")=0 then
+      if length(ISA)=0 or match(ISA,line[91..99])>0 then
+        skip = 0
+      elsif length(ISA)>0 and match(ISA,line[91..99])=0 then
+        skip = 3
+      end if
+    elsif (skip = 2 or skip = 0) and compare(seg[1],"GS")=0 then
+      if length(GS)=0 or match(GS,seg[7])>0 then
+        skip = 0
+      elsif length(GS)>0 and match(GS,seg[7])=0 then
+        skip = 2
+      end if
+    elsif (skip = 1 or skip = 0) and compare(seg[1],"ST")=0 then
+      if compare(seg[2],dtype)=0 then
+        skip = 0
+      else
+        skip = 1
+      end if
+    elsif (skip = 1) and compare(seg[1],"GE")=0 then
+      skip = 0
+    elsif (skip = 2) and compare(seg[1],"IEA")=0 then
+      skip = 0
+    elsif (skip = 0) and compare(dtype,"856")=0 then
+      if compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"850")=0 then
+      if compare(seg[1],"BEG")=0 and length(PO)>0 and match(PO,seg[4])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"810")=0 then
+      if (compare(seg[1],"BIG")=0 and length(PO)>0 and match(PO,seg[5])=0) or
+         (compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0) then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    end if
+
+    if skip = 0 then
+      undolist = append(undolist,{length(buffer)+1,seg[1]})
+      buffer = buffer & line & segterm & 13 & 10
+    end if
+    line = ""
+    c = getc(fp)
+    while c >= 0 and c != segterm do
+      line = line & c
+      c = getc(fp)
+    end while
+    seg = parse_seg(line,elemterm)
+
+  end while
+
+  if length(buffer)>=32000 and length(pgptr)=curpg then
+    junk = seek(fp,where(fp)-length(line)-1)
+    pgptr = append(pgptr,where(fp))
+  elsif length(pgptr)=curpg then
+    pgptr = append(pgptr,where(fp))
+  end if
+  close(fp)
+
+  if atom(line) or length(line)=0 then
+    setEnable(ViewPrevButton,1)
+    setEnable(ViewNextButton,0)
+    setText(ViewPageLabel,sprintf("%d",curpg))
+  else
+    setEnable(ViewPrevButton,1)
+    setEnable(ViewNextButton,1)
+    setText(ViewPageLabel,sprintf("%d",curpg))
+  end if
+  setText(ViewX12,buffer)
+
+
+end procedure
+setHandler(ViewNextButton,w32HClick,routine_id("onClick_ViewNextButton"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_FindinDoc(integer self, integer event, sequence params)
+
+  object junk
+  atom pos
+  sequence buffer, query
+
+  buffer = getText(ViewX12)
+  query = getText(ViewFindinDocEdit)
+  pos = match(query,buffer)
+  if pos > 0 then
+    setFocus(ViewX12)
+    setIndex(ViewX12,{pos,pos+length(query)})
+    junk = sendMessage(ViewX12, EM_SCROLLCARET, 0, 0)
+  elsif isEnabled(ViewNextButton) then
+    onClick_ViewNextButton(self,event,params)
+    onClick_FindinDoc(self,event,params)  -- recursive event
+  end if
+
+end procedure
+setHandler(ViewFindinDocButton,w32HClick,routine_id("onClick_FindinDoc"))
+
+--------------------------------------------------------------------------------
+
+procedure viewFlat(sequence fname)
+	-- Procedure added 12 Oct 2011, v.2.31a
+	atom fp, skip
+	object line, junk
+	sequence pline, buffer, PO, dtype
+	
+	if isChecked(Radio8) then
+		dtype = "856"
+	elsif isChecked(Radio9) then
+		dtype = "810"
+	elsif isChecked(Radio10) then
+		dtype = "850"
+	elsif isChecked(Radio11) then
+		dtype = "997"
+	elsif isChecked(Radio12) then
+		dtype = "860"
+	elsif isChecked(Radio13) then
+		dtype = "832"
+	end if
+	PO = getText(PONumEdit)
+	skip = 0
+	
+	fp = open(fname,"r")
+	if fp < 2 then
+		junk = message_box("The file you selected is not available.","File error",MB_ICONWARNING)
+		closeWindow(ViewWin)
+		return
+	end if
+	line = gets(fp)
+	while sequence(line) and length(buffer)<32000 do
+		if skip and length(line)>3 and compare(line[1..3],"HDR")!=0 then
+		elsif skip and length(line)>3 and compare(line[1..3],"HDR")=0 then
+			pline = parse_seg(line,'|')
+			if compare(pline[11],PO)=0 then
+				skip = 0
+				buffer &= line
+			end if
+		elsif not skip and compare(line[1..3],"HDR")!=0 then
+			buffer &= line
+		elsif not skip and compare(line[1..3],"HDR")=0 then
+			pline = parse_seg(line,'|')
+			if compare(pline[11],PO)=0 then 
+				buffer &= line
+			else
+				skip = 1
+			end if
+		end if
+		line = gets(fp)
+	end while
+	
+	if length(buffer)>=32000 then
+		junk = seek(fp,where(fp)-length(line)-1)
+		pgptr = append(pgptr,where(fp))
+	else
+		pgptr = append(pgptr,where(fp))
+	end if
+	close(fp)
+
+	if atom(line) or length(line)=0 then
+		setEnable(ViewPrevButton,0)
+		setEnable(ViewNextButton,0)
+		setText(ViewPageLabel,"1")
+	else
+		setEnable(ViewPrevButton,0)
+		setEnable(ViewNextButton,1)
+		setText(ViewPageLabel,"1")
+	end if
+	setText(ViewX12,buffer)
+	setText(ViewFindFAButton,"Requeue")
+	
+end procedure
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_ViewX12Button(integer self, integer event, sequence params)
+
+  object junk, line, c
+  sequence buffer, undolist
+  atom fp, skip
+  sequence PO, BOL, ISA, GS, UPC, UCC
+  sequence seg, dtype
+
+  fname = getText(ResultList)
+  openWindow(ViewWin,Modal)
+  setText(ViewWin,fname)
+  setText(ViewX12,"")
+  buffer = ""
+  undolist = {}
+  curpg = 1
+  pgptr = {}
+  
+  if findmode = MODE_FLAT then
+	viewFlat(fname)
+	return
+  end if
+
+  fp = open(fname,"r")
+  if fp < 2 then
+    junk = message_box("The file you selected is not available.","File error",MB_ICONWARNING)
+    closeWindow(ViewWin)
+    return
+  end if
+
+  PO = getText(PONumEdit)
+  BOL = getText(BOLNumEdit)
+  UPC = getText(UPCEdit)
+  UCC = getText(UCCEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  if isChecked(Radio8) then
+    dtype = "856"
+  elsif isChecked(Radio9) then
+    dtype = "810"
+  elsif isChecked(Radio10) then
+    dtype = "850"
+  elsif isChecked(Radio11) then
+    dtype = "997"
+  elsif isChecked(Radio12) then
+    dtype = "860"
+  elsif isChecked(Radio13) then
+    dtype = "832"
+  end if
+  if isEnabled(ViewFindFAButton)=0 then
+    dtype = "997"
+    GS = GScn
+    ISA = ""
+  end if
+  pgptr = append(pgptr, where(fp))
+  if compare(dtype,"997")=0 then
+    setEnable(ViewFindFAButton,0)
+  else
+    setEnable(ViewFindFAButton,1)
+  end if
+
+  line = get_bytes(fp,106)
+  if sequence(line) and length(line)=106 then
+    elemterm = line[4]
+    segterm = line[106]
+    line = line[1..105]
+  end if
+
+  -- ISA filter
+  if length(ISA)>0 and match(ISA,line[91..99])=0 then
+    skip = 3
+  else
+    skip = 0
+  end if
+  seg = parse_seg(line,elemterm)
+
+  while sequence(line) and length(line)>0 and length(buffer) < 32000 do
+    if skip = 0 then
+      undolist = append(undolist,{length(buffer)+1,seg[1]})
+      buffer = buffer & line & segterm & 13 & 10
+      if compare(seg[1],"ISA")=0 then
+        srID = line[55..69]
+        ISAdate = line[71..76]
+        ISAtime = line[78..81]
+      elsif compare(seg[1],"GS")=0 then
+        GScn = seg[7]
+        GStype = seg[2]
+      end if
+    end if
+    line = ""
+    c = getc(fp)
+    while c >= 0 and c != segterm do
+      line = line & c
+      c = getc(fp)
+    end while
+    seg = parse_seg(line,elemterm)
+
+    -- Filters
+    if length(seg)=0 then
+      -- do nothing
+    elsif (skip = 3 or skip = 0) and compare(seg[1],"ISA")=0 then
+      if length(ISA)=0 or match(ISA,line[91..99])>0 then
+        skip = 0
+      elsif length(ISA)>0 and match(ISA,line[91..99])=0 then
+        skip = 3
+      end if
+    elsif (skip = 2 or skip = 0) and compare(seg[1],"GS")=0 then
+      if length(GS)=0 or match(GS,seg[7])>0 then
+        skip = 0
+      elsif length(GS)>0 and match(GS,seg[7])=0 and compare(dtype,"997")!=0 then
+        skip = 2
+      end if
+    elsif (skip = 1 or skip = 0) and compare(seg[1],"ST")=0 then
+      if compare(seg[2],dtype)=0 then
+        skip = 0
+      else
+        skip = 1
+      end if
+    elsif (skip = 1) and compare(seg[1],"GE")=0 then
+      skip = 0
+    elsif (skip = 2) and compare(seg[1],"IEA")=0 then
+      skip = 0
+    elsif (skip = 0) and compare(dtype,"856")=0 then
+      if compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"850")=0 then
+      if compare(seg[1],"BEG")=0 and length(PO)>0 and match(PO,seg[4])=0 then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    elsif (skip = 0) and compare(dtype,"810")=0 then
+      if (compare(seg[1],"BIG")=0 and length(PO)>0 and match(PO,seg[5])=0) or
+         (compare(seg[1],"REF")=0 and compare(seg[2],"BM")=0 and length(BOL)>0 and match(BOL,seg[3])=0) then
+        skip = 1
+        for ulctr = length(undolist) to 1 by -1 do
+          if compare(undolist[ulctr][2],"ST")=0 then
+            buffer = buffer[1..undolist[ulctr][1]-1]
+            undolist = undolist[1..ulctr-1]
+            exit
+          end if
+        end for
+      end if
+    end if
+
+  end while
+  if length(buffer)>=32000 then
+    junk = seek(fp,where(fp)-length(line)-1)
+    pgptr = append(pgptr,where(fp))
+  else
+    pgptr = append(pgptr,where(fp))
+  end if
+  close(fp)
+
+  if atom(line) or length(line)=0 then
+    setEnable(ViewPrevButton,0)
+    setEnable(ViewNextButton,0)
+    setText(ViewPageLabel,"1")
+  else
+    setEnable(ViewPrevButton,0)
+    setEnable(ViewNextButton,1)
+    setText(ViewPageLabel,"1")
+  end if
+  setText(ViewX12,buffer)
+
+
+end procedure
+setHandler(ViewX12Button,w32HClick,routine_id("onClick_ViewX12Button"))
+
+--------------------------------------------------------------------------------
+
+global procedure onClick_FindButton(integer self, integer event, sequence params)
+
+  object junk, line, c
+  atom okfile, subloop
+  atom wlidx, fp, segterm, elemterm
+  sequence path, fname, fdate, tdate, dtype
+  sequence PO, BOL, ISA, GS, UPC, UCC, INV, SRID, TP
+  sequence seg
+  whitelist = {}
+
+  path = getText(PathList)
+  fdate = getText(FromDate)
+  tdate = getText(ToDate)
+  if find(length(fdate),{0,8,10})=0 or find(length(tdate),{0,8,10})=0 then
+    junk = message_box("Dates must be formatted as MM/DD/YYYY.  Thanks.",
+         "Unrecognized date",MB_OK)
+    return
+  end if
+  if length(fdate)=8 then
+    fdate = fdate[1..6]&"20"&fdate[7..8]
+  end if
+  if length(tdate)=8 then
+    tdate = tdate[1..6]&"20"&tdate[7..8]
+  end if
+  dt_fdate = {0,0,0}
+  dt_tdate = {0,0,0}
+  junk = value(fdate[1..2])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[2] = junk[2]
+  end if
+  junk = value(fdate[4..5])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[3] = junk[2]
+  end if
+  junk = value(fdate[7..10])
+  if junk[1] = GET_SUCCESS then
+    dt_fdate[1] = junk[2]
+  end if
+  junk = value(tdate[1..2])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[2] = junk[2]
+  end if
+  junk = value(tdate[4..5])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[3] = junk[2]
+  end if
+  junk = value(tdate[7..10])
+  if junk[1] = GET_SUCCESS then
+    dt_tdate[1] = junk[2]
+  end if
+  PO = getText(PONumEdit)
+  BOL = getText(BOLNumEdit)
+  UPC = getText(UPCEdit)
+  UCC = getText(UCCEdit)
+  INV = getText(InvEdit)
+  ISA = getText(ISAEdit)
+  junk = value(ISA)
+  if junk[1] = GET_SUCCESS and length(ISA)>0 then
+    ISA = sprintf("%09d",junk[2])
+  else
+    ISA = ""
+  end if
+  GS = getText(GSEdit)
+  junk = value(GS)
+  if junk[1] = GET_SUCCESS and length(GS)>0 then
+    GS = sprintf("%d",junk[2])
+  else
+    GS = ""
+  end if
+  if isChecked(Radio8) then
+    dtype = "856"
+  elsif isChecked(Radio9) then
+    dtype = "810"
+  elsif isChecked(Radio10) then
+    dtype = "850"
+  elsif isChecked(Radio11) then
+    dtype = "997"
+  elsif isChecked(Radio12) then
+    dtype = "860"
+  elsif isChecked(Radio13) then
+    dtype = "832"
+  end if
+  SRID = ""
+  TP = upper(getText(TPEdit))
+  for ctr = 1 to length(TPList) do
+    if compare(TP,upper(TPList[ctr][2]))=0 then
+      SRID = TPList[ctr][1]
+      exit
+    end if
+  end for
+  if match("\\Login\\",path) then
+	findmode = MODE_FLAT
+  else
+    findmode = MODE_X12
+  end if
+
+  eraseItems(ResultList)
+  junk = walk_dir(path,routine_id("pop_whitelist1"),1)
+  if length(whitelist)=1 then
+    setText(ResultText, sprintf("I found %d file within the date range.",length(whitelist)))
+  else
+    setText(ResultText, sprintf("I found %d files within the date range.",length(whitelist)))
+  end if
+
+  wlidx = 1
+  while wlidx <= length(whitelist) do
+    fp = open(whitelist[wlidx],"r")
+    if fp < 2 then
+      whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+    else
+      setText(ResultText,sprintf("Scanning %d/%d: \n\r%s",{wlidx-1,length(whitelist),whitelist[wlidx]}))
+      okfile = 0
+	  if findmode = MODE_X12 then
+      line = get_bytes(fp,106)
+      while sequence(line) and length(line)>0 and okfile = 0 do
+        if length(line)=106 then
+--        if length(line) = 106 and compare(line[1..3],"ISA")=0 and
+--           (length(ISA)=0 or compare(line[91..99],ISA)=0) then
+          -- Do I have a valid ISA segment?
+          if compare(line[1..3],"ISA")=0 then
+            -- Does my ISA control number match my filter?
+            if (length(ISA)>0 and compare(line[91..99],ISA)!=0) or
+               -- Does my customer match my filter (send/receive ID)?
+               (length(SRID)>0 and compare(trim(line[55..69]),SRID)!=0 and
+                compare(trim(line[36..50]),SRID)!=0) then
+              -- No.
+              segterm = line[106]
+              elemterm = line[4]
+              subloop = 1
+              while length(line)=106 and subloop=1 do
+                line = get_bytes(fp,106)
+                if match(segterm&"IEA"&elemterm,line)>0 then
+                  line = line[match(segterm&"IEA"&elemterm,line)+5..length(line)]
+                  line = line[find(segterm,line)+1..length(line)]
+                  line = line & get_bytes(fp,106-length(line))
+                  if length(line)=106 and compare(line[1..3],"ISA")=0 then
+                    elemterm = line[4]
+                    segterm = line[106]
+                    if compare(line[91..99],ISA)=0 then
+                      subloop = 0
+                    end if
+                  end if
+                end if
+              end while
+              if subloop = 1 then
+                -- There are no matching ISA segments in this file.
+                exit
+              end if
+              line = ""
+            else
+              -- Yes.
+              elemterm = line[4]
+              segterm = line[106]
+              line = ""
+            end if
+          else
+            -- Not a valid X12 file.
+            exit
+          end if
+          c = getc(fp)
+          while c >= 0 and c != segterm do
+            line = line & c
+            c = getc(fp)
+          end while
+          if length(line) >= 13 and (compare(line[1..2],"GS")=0 or
+             (compare(dtype,"997")=0 and compare(line[1..3],"TA1")=0)) then
+            seg = parse_seg(line,elemterm)
+            if length(seg)>0 then
+              while 1 do
+                if (compare(dtype,"997")=0 and compare(seg[1],"TA1")=0) or
+                   (compare(seg[1],"GS")=0) then
+                   if ((length(seg) >= 7 and
+                      ((compare(dtype,"856")=0 and compare(seg[2],"SH")=0) or
+                       (compare(dtype,"810")=0 and compare(seg[2],"IN")=0) or
+                       (compare(dtype,"810")=0 and compare(seg[2],"OIN")=0) or -- bug in document
+                       (compare(dtype,"810")=0 and compare(seg[2],"OI")=0) or   -- bug in document
+                       (compare(dtype,"850")=0 and compare(seg[2],"PO")=0) or
+                       (compare(dtype,"860")=0 and compare(seg[2],"PC")=0) or
+                       (compare(dtype,"832")=0 and compare(seg[2],"SC")=0) or
+                       (compare(dtype,"997")=0 and compare(seg[2],"FA")=0)) and
+                       (length(GS)=0 or compare(dtype,"997")=0 or compare(GS,seg[7])=0))) then
+                    -- proceed
+                  else
+                    -- This portion of the document fails the GS filter
+                    while length(seg)>0 and length(line)>0 and compare(seg[1],"GE")!=0 do
+                      line = ""
+                      c = getc(fp)
+                      while c >= 0 and c != segterm do
+                        line = line & c
+                        c = getc(fp)
+                      end while
+                      seg = parse_seg(line,elemterm)
+                    end while
+                  end if
+                end if
+                -- All other segments in a document
+                line = ""
+                c = getc(fp)
+                while c >= 0 and c != segterm do
+                  line = line & c
+                  c = getc(fp)
+                end while
+                if length(line)=0 then
+                  exit
+                end if
+                seg = parse_seg(line,elemterm)
+                if length(seg)=0 then
+                  line = ""
+                  exit
+                end if
+                if compare(seg[1],"IEA")=0 then
+                  -- there are multiple ISAs in this document
+                  line = get_bytes(fp,106)
+                  if length(line)<106 then
+                    exit
+                  end if
+                  if compare(line[1..3],"ISA")!=0 then
+                    exit
+                  end if
+                  elemterm = line[4]
+                  segterm = line[106]
+                  if length(ISA)>0 and compare(line[91..99],ISA)!=0 then
+                    -- this one isn't valid
+                    seg = parse_seg(line,elemterm)
+                    while length(seg)>0 and length(line)>0 and compare(seg[1],"GE")!=0 do
+                      line = ""
+                      c = getc(fp)
+                      while c >= 0 and c != segterm do
+                        line = line & c
+                        c = getc(fp)
+                      end while
+                      seg = parse_seg(line,elemterm)
+                    end while
+                  else
+                    -- this one is valid
+                    line = ""
+                    c = getc(fp)
+                    while c >= 0 and c != segterm do
+                      line = line & c
+                      c = getc(fp)
+                    end while
+                    if length(line)=0 then
+                      exit
+                    end if
+                    seg = parse_seg(line,elemterm)
+                    if length(seg)=0 then
+                      line = ""
+                      exit
+                    end if
+                  end if
+                end if
+                if compare(seg[1],"GS")!=0 and
+                   ((compare(dtype,"997")=0 and length(GS)=0) or
+                   (compare(dtype,"997")!=0 and length(PO)=0 and length(BOL)=0 and
+                    length(UCC)=0 and length(UPC)=0 and length(INV)=0)) then
+                  okfile = 1
+                  exit
+                elsif compare(dtype,"850")=0 then
+                  if length(PO)>0 and compare(seg[1],"BEG")=0 and
+                     ((length(seg[4])>0 and (match(PO,seg[4])>0 or match(seg[4],PO)>0)) or
+                      (length(seg[5])>0 and (match(PO,seg[5])>0 or match(seg[5],PO)>0))) then
+                    okfile = 1
+                    exit
+                  end if
+                  if length(UPC)>0 and (compare(seg[1],"PO1")=0 or
+                       compare(seg[1],"SLN")=0 or compare(seg[1],"POC")=0) then
+                    for elemidx = 2 to length(seg) do
+                      if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                        okfile = 1
+                        exit
+                      end if
+                    end for
+                    if okfile = 1 then
+                      exit
+                    end if
+                  end if
+                elsif compare(dtype,"860")=0 then
+                  if length(PO)>0 and compare(seg[1],"BCH")=0 and
+                     (match(PO,seg[4])>0 or match(seg[4],PO)>0) then
+                    okfile = 1
+                    exit
+                  end if
+                  if length(UPC)>0 and (compare(seg[1],"PO1")=0 or
+                       compare(seg[1],"SLN")=0 or compare(seg[1],"POC")=0) then
+                    for elemidx = 2 to length(seg) do
+                      if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                        okfile = 1
+                        exit
+                      end if
+                    end for
+                    if okfile = 1 then
+                      exit
+                    end if
+                  end if
+                elsif compare(dtype,"832")=0 then
+                  if length(UPC)=0 then
+                    okfile = 1 -- For now, take all 832s.  Add check for UPC.
+                  else
+                    if compare(seg[1],"LIN")=0 then
+                      for elemidx = 2 to length(seg) do
+                        if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                          okfile = 1
+                          exit
+                        end if
+                      end for
+                    end if
+                  end if
+                elsif compare(dtype,"856")=0 then
+                  if length(BOL)>0 and ((compare(seg[1],"BSN")=0 and
+                     (match(BOL,seg[3])>0 or match(seg[3],BOL)>0)) or
+                     (compare(seg[1],"REF")=0 and (compare(seg[2],"BM")=0 or
+                     compare(seg[2],"MB")=0) and (match(BOL,seg[3])>0 or
+                     match(seg[3],BOL)>0))) then
+                    okfile = 1
+                    exit
+                  end if
+                  if length(PO)>0 and (compare(seg[1],"PRF")=0 and
+                     (match(PO,seg[2])>0 or match(seg[2],PO)>0)) then
+                    okfile = 1
+                    exit
+                  end if
+                  if length(UPC)>0 and (compare(seg[1],"LIN")=0 or
+                       compare(seg[1],"SLN")=0) then
+                    for elemidx = 2 to length(seg) do
+                      if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                        okfile = 1
+                        exit
+                      end if
+                    end for
+                    if okfile = 1 then
+                      exit
+                    end if
+                  end if
+                  if length(UCC)>0 and (compare(seg[1],"MAN")=0) and
+                     (match(UCC,seg[3])>0 or match(seg[3],UCC)>0) then
+                    okfile = 1
+                    exit
+                  end if
+                elsif compare(dtype,"810")=0 then
+                  if length(BOL)>0 and ((compare(seg[1],"REF")=0 and
+                     (compare(seg[2],"MB")=0 or compare(seg[2],"BM")=0) and
+                     (match(BOL,seg[3])>0 or match(seg[3],BOL)>0))) then
+                    okfile=1
+                    exit
+                  end if
+				  if length(BOL)>0 and ((compare(seg[1],"CAD")=0 and length(seg)>=9 and
+					(compare(seg[8],"MB")=0 or compare(seg[8],"BM")=0) and
+					(match(BOL,seg[9])>0 or match(seg[9],BOL)>0))) then
+					okfile = 1
+					exit
+				  end if
+                  if length(PO)>0 and ((compare(seg[1],"BIG")=0 and
+                     (match(PO,seg[5])>0 or match(seg[5],PO)>0))) then
+                    okfile = 1
+                    exit
+                  end if
+				  if length(INV)>0 and ((compare(seg[1],"BIG")=0 and
+				     (match(INV,seg[3])>0 or match(seg[3],INV)>0))) then
+					okfile = 1
+					exit
+				  end if
+                  if length(UPC)>0 and (compare(seg[1],"IT1")=0 or
+                       compare(seg[1],"SLN")=0) then
+                    for elemidx = 2 to length(seg) do
+                      if length(seg[elemidx])>0 and (match(UPC,seg[elemidx])>0) then
+                        okfile = 1
+                        exit
+                      end if
+                    end for
+                    if okfile = 1 then
+                      exit
+                    end if
+                  end if
+                elsif compare(dtype,"997")=0 then
+                  if length(GS)>0 and ((compare(seg[1],"AK1")=0 and
+                     (match(GS,seg[3])>0 or match(seg[3],GS)>0))) then
+                    okfile = 1
+                    exit
+                  end if
+                end if
+              end while
+            end if
+          end if
+        else
+          line = ""
+        end if
+        if okfile then
+          exit
+        end if
+        line = line & get_bytes(fp,106)
+      end while
+	  elsif findmode = MODE_FLAT then
+		line = gets(fp)
+		okfile = 0
+		while sequence(line) and length(line)>0 do
+			line = parse_seg(line,'|')
+			if compare(dtype,"850")=0 and length(line)>0 then
+				if compare(line[1],"HDR")=0 then
+					-- PO # = line[11]
+					if length(PO)>0 and length(line)>11 and match(PO,line[11])>0 then
+						okfile = 1
+						exit
+					end if
+				end if
+			end if
+			line = gets(fp)
+		end while
+	  end if -- Mode Flat/X12
+      close(fp)
+      if not okfile then
+        whitelist = whitelist[1..wlidx-1]&whitelist[wlidx+1..length(whitelist)]
+      else
+        wlidx = wlidx + 1
+      end if
+    end if
+  end while
+
+  for ctr = 1 to length(whitelist) do
+    addItem(ResultList,whitelist[ctr])
+  end for
+
+  if getCount(ResultList) >= 1 then
+    setIndex(ResultList,1)
+  end if
+
+  if length(whitelist)=1 then
+    setText(ResultText,sprintf("I found %d file.  To view it, " &
+          "click the \"View X12\" button.",{length(whitelist)}))
+  elsif length(whitelist)=0 then
+    setText(ResultText,"I didn\'t find any files.  Please adjust your filters and try again.")
+  else
+    setText(ResultText,sprintf("I found %d files.  Select the file you wish to use " &
+          "and click the \"View X12\" button.",{length(whitelist)}))
+  end if
+
+end procedure
+setHandler(FindButton,w32HClick,routine_id("onClick_FindButton"))
+
+--------------------------------------------------------------------------------
+-- MAIN
+--------------------------------------------------------------------------------
+
+read_INI()
+WinMain( X12Win,Normal )
+
